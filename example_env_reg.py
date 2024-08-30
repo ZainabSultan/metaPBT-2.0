@@ -37,24 +37,6 @@ import ray
 from ray import train, tune
 from DKL.pb2 import PB2
 
-#if __name__ == "__main__":
-    #import argparse
-
-    # parser = argparse.ArgumentParser()
-    # parser.add_argument(
-    #     "--smoke-test", action="store_true", help="Finish quickly for testing"
-    # )
-    # args, _ = parser.parse_known_args()
-
-    # Postprocess the perturbed config to ensure it's still valid
-    # def explore(config):
-    #     # ensure we collect enough timesteps to do sgd
-    #     if config["train_batch_size"] < config["sgd_minibatch_size"] * 2:
-    #         config["train_batch_size"] = config["sgd_minibatch_size"] * 2
-    #     # ensure we run at least one sgd iter
-    #     if config["num_sgd_iter"] < 1:
-    #         config["num_sgd_iter"] = 1
-    #     return config
 
 hyperparam_mutations = {
     "lambda": lambda: random.uniform(0.9, 1.0),
@@ -131,4 +113,4 @@ df = df.drop_duplicates(subset="training_iteration", keep="last")
 df.plot("training_iteration", "mean_accuracy")
 plt.xlabel("Training Iterations")
 plt.ylabel("Test Accuracy")
-plt.show()
+plt.save('training.png')
