@@ -2,10 +2,11 @@
 
 
 from typing import Any, Dict
-from carl.context.selection import AbstractSelector
-from carl.envs.gymnasium.classic_control import CARLMountainCar
-from carl.utils.types import Contexts
+#from carl.context.selection import AbstractSelector
+#from carl.envs.gymnasium.classic_control import CARLMountainCar
+#from carl.utils.types import Contexts
 from gymnasium import Env
+from CARL.carl.envs.gymnasium.classic_control import CARLMountainCar
 
 
 class CARLWrapper(CARLMountainCar):
@@ -33,9 +34,9 @@ class CARLWrapper(CARLMountainCar):
 
 
 env_config =  {'gravity': 0.0025}
-# env = CARLWrapper(contexts={0:env_config})
-# env.reset(seed=0)
-# print(env.step(0))
+env = CARLWrapper(contexts={0:env_config})
+env.reset(seed=0)
+print(env.step(0))
 
 
 from ray.rllib.algorithms import ppo
