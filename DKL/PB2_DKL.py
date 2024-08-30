@@ -11,7 +11,7 @@ from ray.tune.schedulers import PopulationBasedTraining
 from ray.tune.schedulers.pbt import _PBTTrialState
 from ray.tune.utils.util import flatten_dict, unflatten_dict
 from ray.util.debug import log_once
-from PB2_DKL_utils import train_DKL_wilson, UCB_DKL,optimize_acq_DKL
+from DKL.PB2_DKL_utils import train_DKL_wilson, UCB_DKL,optimize_acq_DKL
 import math
 import torch
 import gpytorch
@@ -44,8 +44,9 @@ if GPy and has_sklearn:
         optimize_acq,
         select_length,
         standardize,
-        get_limits
+        
     )
+    from DKL.pb2_utils import get_limits
 
 logger = logging.getLogger(__name__)
 

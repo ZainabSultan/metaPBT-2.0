@@ -2,11 +2,11 @@
 
 
 from typing import Any, Dict
-#from carl.context.selection import AbstractSelector
-#from carl.envs.gymnasium.classic_control import CARLMountainCar
+from carl.context.selection import AbstractSelector
+from carl.envs.gymnasium.classic_control import CARLMountainCar
 #from carl.utils.types import Contexts
 from gymnasium import Env
-from CARL.carl.envs.gymnasium.classic_control import CARLMountainCar
+#from CARL.carl.envs.gymnasium.classic_control import CARLMountainCar
 
 
 class CARLWrapper(CARLMountainCar):
@@ -33,24 +33,24 @@ class CARLWrapper(CARLMountainCar):
 
 
 
-env_config =  {'gravity': 0.0025}
-env = CARLWrapper(contexts={0:env_config})
-env.reset(seed=0)
-print(env.step(0))
+# env_config =  {'gravity': 0.0025}
+# env = CARLWrapper(contexts={0:env_config})
+# env.reset(seed=0)
+# print(env.step(0))
 
 
-from ray.rllib.algorithms import ppo
+# from ray.rllib.algorithms import ppo
 
-from ray.tune.registry import register_env
+# from ray.tune.registry import register_env
 
-def env_creator(env_config):
-    return CARLWrapper(contexts={0:env_config})  # return an env instance
+# def env_creator(env_config):
+#     return CARLWrapper(contexts={0:env_config})  # return an env instance
 
-register_env("my_env", env_creator)
-algo = ppo.PPO(env="my_env",config={
-    "env_config": env_config,  # config to pass to env class
-})
-print(algo.train())
+# register_env("my_env", env_creator)
+# algo = ppo.PPO(env="my_env",config={
+#     "env_config": env_config,  # config to pass to env class
+# })
+# print(algo.train())
 # import gymnasium as gym
 # from carl.envs.gymnasium.classic_control import CARLMountainCar
 # import numpy as np

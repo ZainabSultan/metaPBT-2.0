@@ -35,7 +35,7 @@ import random
 
 import ray
 from ray import train, tune
-from DKL.pb2 import PB2
+from DKL.pb2 import PB2 
 
 
 hyperparam_mutations = {
@@ -49,7 +49,7 @@ hyperparam_mutations = {
 
 pbt = PB2(
     time_attr="time_total_s",
-    perturbation_interval=5,
+    perturbation_interval=10,
     #resample_probability=0.25,
     # Specifies the mutations of these hyperparams
     hyperparam_bounds={"lr": [0.0001, 0.1]},
@@ -59,13 +59,13 @@ pbt = PB2(
 )
 
 # Stop when we've either reached 100 training iterations or reward=300
-stopping_criteria = {"training_iteration": 20, "episode_reward_mean": 900}
+stopping_criteria = {"training_iteration": 20, "env_runners/episode_reward_mean": 900}
 pertubation_interval=5
 tuner = tune.Tuner(
 
     "PPO",
     tune_config=tune.TuneConfig(
-        metric="episode_reward_mean",
+        metric="env_runners/episode_reward_mean",
         mode="max",
         scheduler=pbt,
         num_samples=2,
@@ -75,28 +75,34 @@ tuner = tune.Tuner(
         "env": "CARLMountainCar",
         "kl_coeff": 1.0,
         "num_workers": 2,
-        "num_cpus": 1,  # number of CPUs to use per trial
+        "num_cpus": 4,  # number of CPUs to use per trial
         "num_gpus": 0,  # number of GPUs to use per trial
         #"model": {"free_log_std": True},
         "env_config": context,
         # These params are tuned from a fixed starting value.
-        "lambda": 0.95,
-        "clip_param": 0.2,
-        "lr": 1e-4,
+        #"lambda": 0.95,
+        #"clip_param": 0.2,
+        "lr": 1e-3,
          "checkpoint_interval": pertubation_interval
         # These params start off randomly drawn from a set.
         #"num_sgd_iter": tune.choice([10, 20, 30]),
         #"sgd_minibatch_size": tune.choice([128, 512, 2048]),
         #"train_batch_size": tune.choice([10000, 20000, 40000]),
     },
-    run_config=train.RunConfig(stop=stopping_criteria,  storage_path="/Users/zasulta/Documents/DL/23_05_2024_DL_test/DKL/visualisations/ray_results",
+    run_config=train.RunConfig(stop=stopping_criteria,  storage_path=r"C:\Users\zaina\Downloads\Code\metapbt-2.0\metapbt2.0\DKL\visualisations\ray_results",
                                name='CARLMCD'),
 )
 random.seed(0)
 np.random.seed(0)
 torch.manual_seed(0)
+
+ray.init()  # Initialize Ray
+
+print("Available resources:", ray.available_resources())
+print("Cluster resources:", ray.cluster_resources())
+
 results_grid = tuner.fit()
-best_result = results_grid.get_best_result(metric="mean_accuracy", mode="max")
+best_result = results_grid.get_best_result(metric="env_runners/episode_reward_mean", mode="max")
 
 # Print `path` where checkpoints are stored
 print('Best result path:', best_result.path)
@@ -110,7 +116,8 @@ print("Best final iteration hyperparameter config:\n", best_result.config)
 df = best_result.metrics_dataframe
 # Deduplicate, since PBT might introduce duplicate data
 df = df.drop_duplicates(subset="training_iteration", keep="last")
-df.plot("training_iteration", "mean_accuracy")
+df.plot("training_iteration", "env_runners/episode_reward_mean")
 plt.xlabel("Training Iterations")
 plt.ylabel("Test Accuracy")
-plt.save('training.png')
+plt.show()
+plt.imsave('training.png')
