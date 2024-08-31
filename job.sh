@@ -21,10 +21,11 @@ conda activate automl
 cp -r $(ws_find dkl_exps)/metadata ${TMPDIR}/metadata
 
 #set up all the args
-kwargs="--experiment-name=$SLURM_JOB_NAME --n-workers=$SLURM_CPUS_PER_TASK --device="cpu" --working-dir=$(ws_find dkl_exps) --metadata-file=${TMPDIR}/metadata/deepweedsx_balanced-epochs-trimmed.csv" 
+#kwargs="--experiment-name=$SLURM_JOB_NAME --n-workers=$SLURM_CPUS_PER_TASK --device="cpu" --working-dir=$(ws_find dkl_exps) --metadata-file=${TMPDIR}/metadata/deepweedsx_balanced-epochs-trimmed.csv" 
 #--warmstart-smbo"
-
 #kwargs="--experiment-name=$SLURM_JOB_NAME --n-workers=$SLURM_CPUS_PER_TASK --device="cuda" --working-dir=$(ws_find automl) \
 #--datasetpath=${TMPDIR}/data --metadata-file=${TMPDIR}/metadata/deepweedsx_balanced-epochs-trimmed.csv" 
 
-python3 -m warmstart_template $kwargs # --experiment-name=$SLURM_JOB_NAME --n-workers=$SLURM_CPUS_PER_TASK --device="cuda" # --warmstart-smbo
+#python3 -m ppo_ray_example $kwargs # --experiment-name=$SLURM_JOB_NAME --n-workers=$SLURM_CPUS_PER_TASK --device="cuda" # --warmstart-smbo
+
+python3 -m ppo_ray_example
