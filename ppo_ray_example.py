@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import random
 from datetime import datetime
@@ -51,6 +52,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_samples", type=int, default=4)
     parser.add_argument("--t_ready", type=int, default=50000)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--context", type=str, default='{"gravity": 0.0025}')
     parser.add_argument(
         "--horizon", type=int, default=1600
     )  # make this 1000 for other envs
@@ -64,13 +66,18 @@ if __name__ == "__main__":
     )  # May be important to use a larger network for bigger tasks.
     parser.add_argument("--filename", type=str, default="")
     parser.add_argument("--method", type=str, default="pb2_dkl")  # ['pbt', 'pb2']
-    parser.add_argument("--save_csv", type=bool, default=False)
+    parser.add_argument("--save_csv", type=bool, default=True)
+    parser.add_argument('--ws_dir', type=str, default=r'C:\Users\zaina\Downloads\Code\metapbt-2.0\metapbt2.0\testing')
 
     args = parser.parse_args()
+
+    context = json.loads(args.context)
 
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
+
+    print(args.env_name, args.context)
 
     # bipedalwalker needs 1600
     if args.env_name in ["BipedalWalker-v2", "BipedalWalker-v3"]:
@@ -129,17 +136,18 @@ if __name__ == "__main__":
     methods = {"pbt": pbt, "pb2": pb2, 'pb2_dkl':pb2_dkl}
 
     timelog = (
-        str(datetime.date(datetime.now())) + "_" + str(datetime.time(datetime.now()))
+        str(datetime.date(datetime.now()))
     )
 
-    args.dir = "{}_{}_{}_Size{}_{}_{}".format(
+    args.dir = os.path.join(args.ws_dir , "{}_{}_{}_{}_Size{}_{}_{}".format(
+        timelog,
         args.algo,
         args.filename,
         args.method,
         str(args.num_samples),
         args.env_name,
         args.criteria,
-    )
+    ))
 
     analysis = run(
         args.algo,
@@ -181,20 +189,23 @@ if __name__ == "__main__":
     combined_df = pd.concat(all_dfs, axis=0)
 
     # Step 2: Identify the best worker based on the highest mean episode reward
-    best_trial_idx = combined_df['episode_reward_mean'].idxmax()
+    best_trial_idx = combined_df['env_runners/episode_reward_mean'].idxmax()
     best_trial = combined_df.loc[best_trial_idx]
 
     # Step 3: Extract the data for the best trial
     best_trial_data = combined_df[combined_df['trial_id'] == best_trial['trial_id']]
 
+    if not (os.path.exists(os.path.join(args.dir,'data'))):
+        os.makedirs(os.path.join(args.dir,'data'))
+
     # Step 4: Plot the mean episode reward against time
     plt.figure(figsize=(10, 6))
-    plt.plot(best_trial_data['time_total_s'], best_trial_data['episode_reward_mean'])
+    plt.plot(best_trial_data['time_total_s'], best_trial_data['env_runners/episode_reward_mean'])
     plt.xlabel('Time (s)')
     plt.ylabel('Mean Episode Reward')
     plt.title(f"Mean Episode Reward Over Time for Best Trial (ID: {best_trial['trial_id']})")
     plt.grid(True)
-    plt.show()
+    plt.savefig(os.path.join(args.dir,'data','best_perf.png'))
 
     results = pd.DataFrame()
     for i in range(args.num_samples):
@@ -203,7 +214,5 @@ if __name__ == "__main__":
         results = pd.concat([results, df]).reset_index(drop=True)
 
     if args.save_csv:
-        if not (os.path.exists("data/" + args.dir)):
-            os.makedirs("data/" + args.dir)
-
-        results.to_csv("data/{}/seed{}.csv".format(args.dir, str(args.seed)))
+        save_path = os.path.join(args.dir,'data',"seed{}.csv".format( str(args.seed)))
+        results.to_csv(save_path)
