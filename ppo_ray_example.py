@@ -15,8 +15,7 @@ from ray.tune.schedulers import PopulationBasedTraining
 from ray.tune.schedulers.pb2 import PB2
 
 from CARL_env_reg_wrapper import CARLWrapper
-context = {'gravity': 0.0025}
-seed=0
+
 
 def dict_to_path_string(params):
     # Flatten the dictionary into key=value format
