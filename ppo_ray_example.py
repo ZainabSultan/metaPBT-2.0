@@ -110,10 +110,10 @@ if __name__ == "__main__":
         quantile_fraction=args.perturb,  # copy bottom % with top %
         # Specifies the hyperparam search space
         hyperparam_bounds={
-            "lambda": [0.9, 1.0],
-            "clip_param": [0.1, 0.5],
+            #"lambda": [0.9, 1.0],
+            #"clip_param": [0.1, 0.5],
             "lr": [1e-5, 1e-3],
-            "train_batch_size": [1000, 60000],
+            #"train_batch_size": [1000, 60000],
         },
         seed=args.seed
     
@@ -126,10 +126,10 @@ if __name__ == "__main__":
         quantile_fraction=args.perturb,  # copy bottom % with top %
         # Specifies the hyperparam search space
         hyperparam_bounds={
-            "lambda": [0.9, 1.0],
-            "clip_param": [0.1, 0.5],
+            #"lambda": [0.9, 1.0],
+            #"clip_param": [0.1, 0.5],
             "lr": [1e-5, 1e-3],
-            "train_batch_size": [1000, 60000],
+            #"train_batch_size": [1000, 60000],
         },
     )
 
@@ -142,7 +142,7 @@ if __name__ == "__main__":
     args.dir = os.path.join(args.ws_dir , "{}_{}_{}_{}_Size{}_{}_{}".format(
         timelog,
         args.algo,
-        args.filename,
+        args.context,
         args.method,
         str(args.num_samples),
         args.env_name,
