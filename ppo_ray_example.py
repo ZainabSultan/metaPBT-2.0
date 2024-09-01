@@ -18,6 +18,17 @@ from CARL_env_reg_wrapper import CARLWrapper
 context = {'gravity': 0.0025}
 seed=0
 
+def dict_to_path_string(params):
+    # Flatten the dictionary into key=value format
+    elements = [f"{key}_{value}" for key, value in params.items()]
+    
+    # Join the elements with underscores or any other separator
+    path_friendly_string = "_".join(elements)
+    
+    # Replace any problematic characters if needed
+    path_friendly_string = path_friendly_string.replace(" ", "_").replace("{", "").replace("}", "").replace(":", "")
+    
+    return path_friendly_string
 
 # Postprocess the perturbed config to ensure it's still valid used if PBT.
 def explore(config):
@@ -92,7 +103,7 @@ if __name__ == "__main__":
     args.dir = os.path.join(args.ws_dir , "{}_{}_{}_{}_Size{}_{}_{}".format(
         timelog,
         args.algo,
-        args.filename,
+        dict_to_path_string(context),
         args.method,
         str(args.num_samples),
         args.env_name,
@@ -156,7 +167,7 @@ if __name__ == "__main__":
     analysis = run(
         args.algo,
         name="{}_{}_seed{}_{}".format(
-            args.method, args.env_name, str(args.seed), args.filename
+            args.method, args.env_name, str(args.seed), dict_to_path_string(context)
         ),
         scheduler=methods[args.method],
         verbose=1,
