@@ -85,6 +85,19 @@ if __name__ == "__main__":
     else:
         horizon = 1000
 
+    timelog = (
+        str(datetime.date(datetime.now()))
+    )
+
+    args.dir = os.path.join(args.ws_dir , "{}_{}_{}_{}_Size{}_{}_{}".format(
+        timelog,
+        args.algo,
+        args.filename,
+        args.method,
+        str(args.num_samples),
+        args.env_name,
+        args.criteria,
+    ))
     pbt = PopulationBasedTraining(
         time_attr=args.criteria,
         metric='env_runners/episode_reward_mean',
@@ -115,7 +128,8 @@ if __name__ == "__main__":
             "lr": [1e-5, 1e-3],
             "train_batch_size": [1000, 60000],
         },
-        seed=args.seed
+        seed=args.seed,
+        #save_path=args.dir
     
     )
     pb2 = PB2(
@@ -135,19 +149,9 @@ if __name__ == "__main__":
 
     methods = {"pbt": pbt, "pb2": pb2, 'pb2_dkl':pb2_dkl}
 
-    timelog = (
-        str(datetime.date(datetime.now()))
-    )
 
-    args.dir = os.path.join(args.ws_dir , "{}_{}_{}_{}_Size{}_{}_{}".format(
-        timelog,
-        args.algo,
-        args.filename,
-        args.method,
-        str(args.num_samples),
-        args.env_name,
-        args.criteria,
-    ))
+
+
 
     analysis = run(
         args.algo,
@@ -182,6 +186,7 @@ if __name__ == "__main__":
             #"train_batch_size": sample_from(lambda spec: random.randint(1000, 60000)),
             "env_config": context,
         },
+        storage_path=args.dir
     )
 
     # Step 1: Concatenate all dataframes to find the best worker
