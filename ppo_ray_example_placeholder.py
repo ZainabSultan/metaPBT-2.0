@@ -15,34 +15,7 @@ from ray.tune.schedulers import PopulationBasedTraining
 from ray.tune.schedulers.pb2 import PB2
 
 from CARL_env_reg_wrapper import CARLWrapper
-from ray.tune import Callback
 
-
-class DynamicTrialLogger(Callback):
-    def __init__(self, metric_name, time_attr, log_dir=None):
-        self.metric_name = metric_name
-        self.time_attr = time_attr
-        self.log_dir = log_dir or os.getcwd()  # Default to current working directory
-        self.log_file_path = os.path.join(self.log_dir, "trial_log.csv")
-        
-        # Ensure the log directory exists
-        os.makedirs(self.log_dir, exist_ok=True)
-
-        # Create or clear the log file at the beginning
-        with open(self.log_file_path, "w") as f:
-            f.write("Trial ID, Time Step, Hyperparameters, Metric\n")
-
-    def on_trial_result(self, iteration, trials, trial, result, **info):
-        trial_id = trial.trial_id
-        hyperparams = trial.config
-        if self.metric_name == 'env_runners/episode_reward_mean':
-            env_runners = result.get('env_runners', None)
-            if env_runners is not None:
-                metric_value=env_runners.get('episode_reward_mean', None)
-        time_step = result.get(self.time_attr, None)
-        if metric_value is not None and time_step is not None:
-            with open(self.log_file_path, "a") as f:
-                f.write(f"{trial_id}, {time_step}, {hyperparams}, {metric_value}\n")
 
 def dict_to_path_string(params):
     # Flatten the dictionary into key=value format
@@ -67,13 +40,35 @@ def explore(config):
     config["train_batch_size"] = int(config["train_batch_size"])
     return config
 
+def env_creator(env_name):
+    if env_name == 'CARLCartPole':
+        from CARL_env_reg_wrapper_copy import CARLCartPoleWrapper as env
+    elif env_name == 'CARLMountainCar':
+        from CARL_env_reg_wrapper_copy import CARLMountainCarWrapper as env
+    elif env_name == 'CARLMountainCarCont':
+        from CARL_env_reg_wrapper_copy import CARLMountainCarContWrapper as env
+    elif env_name == 'CARLAcrobot':
+        from CARL_env_reg_wrapper_copy import CARLAcrobotWrapper as env
+    elif env_name == 'CARLPendulum':
+        from CARL_env_reg_wrapper_copy import CARLPendulumWrapper as env
+    else:
+        raise NotImplementedError
+    return env
 
-def env_creator(env_config):
-    env = CARLWrapper(contexts={0:env_config})
-    return env  # return an env instance
 
 
-register_env("CARLMountainCar", env_creator)
+
+
+# def env_creator(env_config):
+#     #base_env = CARLMountainCar(contexts=env_config)
+#     #print('base',base_env.observation_space)
+#     #base_env_space = spaces.Box(shape=(2,), low=-np.inf, high=np.inf)
+#     #env= CARL_env_wrapper(base_env, base_env_space)
+#     env = CARLWrapper(contexts={0:env_config})
+#     return env  # return an env instance
+
+
+# register_env("CARLMountainCar", env_creator)
 
 
 if __name__ == "__main__":
@@ -86,7 +81,6 @@ if __name__ == "__main__":
     parser.add_argument("--t_ready", type=int, default=50000)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--context", type=str, default='{"gravity": 0.0025}')
-    parser.add_argument("--metric", type=str, default='env_runners/episode_reward_mean')
     parser.add_argument(
         "--horizon", type=int, default=1600
     )  # make this 1000 for other envs
@@ -109,6 +103,9 @@ if __name__ == "__main__":
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
+
+    env = env_creator(args.env_name)
+    register_env(env_name, lambda: env_config, env(contexts={0:env_config}))
 
     print(args.env_name, args.context)
 
@@ -219,11 +216,8 @@ if __name__ == "__main__":
             #"train_batch_size": sample_from(lambda spec: random.randint(1000, 60000)),
             "env_config": context,
         },
-        storage_path=args.dir,
-        callbacks=[DynamicTrialLogger(metric_name=args.metric, time_attr=args.criteria, log_dir=args.dir)],
+        storage_path=args.dir
     )
-
-    
 
     # Step 1: Concatenate all dataframes to find the best worker
     all_dfs = list(analysis.trial_dataframes.values())
@@ -247,7 +241,6 @@ if __name__ == "__main__":
     plt.title(f"Mean Episode Reward Over Time for Best Trial (ID: {best_trial['trial_id']})")
     plt.grid(True)
     plt.savefig(os.path.join(args.dir,'data','best_perf_{seed}.png'.format(seed=str(args.seed))))
-    print('this is where you save your graphs',os.path.join(args.dir,'data','best_perf_{seed}.png'.format(seed=str(args.seed))))
 
     results = pd.DataFrame()
     for i in range(args.num_samples):

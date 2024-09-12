@@ -10,10 +10,11 @@ import pandas as pd
 from ray.tune.registry import register_env
 import torch
 from DKL.PB2_DKL import PB2_dkl
+from DKL.Meta_PB2_DKL import PB2_Meta_dkl
 from ray.tune import run, sample_from
 from ray.tune.schedulers import PopulationBasedTraining
 from ray.tune.schedulers.pb2 import PB2
-
+from DKL.meta_data import MetadataCollection, TrialLogProcessor
 from CARL_env_reg_wrapper import CARLWrapper
 from ray.tune import Callback
 
@@ -99,9 +100,13 @@ if __name__ == "__main__":
         "--net", type=str, default="32_32"
     )  # May be important to use a larger network for bigger tasks.
     parser.add_argument("--filename", type=str, default="")
-    parser.add_argument("--method", type=str, default="pb2_dkl")  # ['pbt', 'pb2']
+    parser.add_argument("--method", type=str, default="pb2_meta_dkl")  # ['pbt', 'pb2']
     parser.add_argument("--save_csv", type=bool, default=True)
     parser.add_argument('--ws_dir', type=str, default=r'C:\Users\zaina\Downloads\Code\metapbt-2.0\metapbt2.0\testing')
+    parser.add_argument('--meta_job_log_dirs', type=str, nargs='+', help="Paths to job log directories")
+    parser.add_argument('--meta_hyperparameters_tuned', type=str, nargs='+', default=['info/learner/default_policy/learner_stats/cur_lr'], help="List of hyperparameters to extract")
+    parser.add_argument('--meta_time_attr', type=str, default='num_env_steps_trained')
+    parser.add_argument('--meta_metric', type=str, default='env_runners/episode_reward_mean')
 
     args = parser.parse_args()
     context = json.loads(args.context.replace("'", ""))
@@ -110,7 +115,7 @@ if __name__ == "__main__":
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
-    print(args.env_name, args.context)
+    print(args.env_name, args.context, args.max)
 
     # bipedalwalker needs 1600
     if args.env_name in ["BipedalWalker-v2", "BipedalWalker-v3"]:
@@ -180,9 +185,29 @@ if __name__ == "__main__":
         },
     )
 
-    methods = {"pbt": pbt, "pb2": pb2, 'pb2_dkl':pb2_dkl}
+    processor = TrialLogProcessor(job_log_dirs=args.meta_job_log_dirs, hyperparameters_tuned=args.meta_hyperparameters_tuned, metric=args.meta_metric, time_attr=args.meta_time_attr)
+    processor.find_and_process_logs()
 
+    metadata_collection = processor.get_metadata_collection()
 
+    pb2_meta_dkl = PB2_Meta_dkl(
+        time_attr=args.criteria,
+        metric='env_runners/episode_reward_mean',
+        mode="max",
+        perturbation_interval=args.t_ready,
+        quantile_fraction=args.perturb,  # copy bottom % with top %
+        # Specifies the hyperparam search space
+        hyperparam_bounds={
+            #"lambda": [0.9, 1.0],
+            #"clip_param": [0.1, 0.5],
+            "lr": [1e-5, 1e-3],
+            #"train_batch_size": [1000, 60000],
+        },
+        seed=args.seed,
+        meta_data_collection= metadata_collection
+    )
+
+    methods = {"pbt": pbt, "pb2": pb2, 'pb2_dkl':pb2_dkl, 'pb2_meta_dkl': pb2_meta_dkl}
 
 
 
@@ -220,10 +245,8 @@ if __name__ == "__main__":
             "env_config": context,
         },
         storage_path=args.dir,
-        callbacks=[DynamicTrialLogger(metric_name=args.metric, time_attr=args.criteria, log_dir=args.dir)],
+        #callbacks=[DynamicTrialLogger(metric_name=args.metric, time_attr=args.criteria, log_dir=args.dir)],
     )
-
-    
 
     # Step 1: Concatenate all dataframes to find the best worker
     all_dfs = list(analysis.trial_dataframes.values())

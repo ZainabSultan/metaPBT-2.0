@@ -20,84 +20,84 @@ logging.getLogger().setLevel(logging.INFO)
 import random
 
 
-# def train_neural_network_model(model, X, y, num_epochs=50, batch_size=32, learning_rate=1e-3,  early_stopping_patience=5):
-#     # Prepare for cross-validation
-#     kf = KFold(n_splits=5, shuffle=True, random_state=42)
-#     spearman_scores = []
-#     cv_scores = []
+def train_neural_network_model(model, X, y, num_epochs=50, batch_size=32, learning_rate=1e-3,  early_stopping_patience=5):
+    # Prepare for cross-validation
+    kf = KFold(n_splits=5, shuffle=True, random_state=42)
+    spearman_scores = []
+    cv_scores = []
     
-#     for fold, (train_idx, val_idx) in enumerate(kf.split(X)):
-#         print(f"Fold {fold + 1}/{kf.get_n_splits()}")
+    for fold, (train_idx, val_idx) in enumerate(kf.split(X)):
+        print(f"Fold {fold + 1}/{kf.get_n_splits()}")
 
-#         # Split the data
-#         X_train, X_val = X[train_idx], X[val_idx]
-#         y_train, y_val = y[train_idx], y[val_idx]
+        # Split the data
+        X_train, X_val = X[train_idx], X[val_idx]
+        y_train, y_val = y[train_idx], y[val_idx]
 
-#         # Create DataLoader
-#         train_dataset = torch.utils.data.TensorDataset(torch.tensor(X_train, dtype=torch.float32), torch.tensor(y_train, dtype=torch.float32))
-#         val_dataset = torch.utils.data.TensorDataset(torch.tensor(X_val, dtype=torch.float32), torch.tensor(y_val, dtype=torch.float32))
+        # Create DataLoader
+        train_dataset = torch.utils.data.TensorDataset(torch.tensor(X_train, dtype=torch.float32), torch.tensor(y_train, dtype=torch.float32))
+        val_dataset = torch.utils.data.TensorDataset(torch.tensor(X_val, dtype=torch.float32), torch.tensor(y_val, dtype=torch.float32))
 
-#         train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=False)
-#         val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+        val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
-#         # Initialize the model, loss function, and optimizer
-#         # input_dim = X.shape[1]
-#         # output_dim = 1
-#         #model = SimpleNN(input_dim, hidden_dim, output_dim)
-#         criterion = nn.MSELoss()
-#         optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+        # Initialize the model, loss function, and optimizer
+        # input_dim = X.shape[1]
+        # output_dim = 1
+        #model = SimpleNN(input_dim, hidden_dim, output_dim)
+        criterion = nn.MSELoss()
+        optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
-#         # Early stopping variables
-#         best_val_loss = float('inf')
-#         patience_counter = 0
+        # Early stopping variables
+        best_val_loss = float('inf')
+        patience_counter = 0
 
-#         for epoch in range(num_epochs):
-#             model.train()
-#             running_loss = 0.0
+        for epoch in range(num_epochs):
+            model.train()
+            running_loss = 0.0
             
-#             # Training phase
-#             for inputs, targets in train_loader:
-#                 optimizer.zero_grad()
-#                 outputs = model(inputs)
-#                 loss = criterion(outputs.squeeze(), targets)
-#                 loss.backward()
-#                 optimizer.step()
-#                 running_loss += loss.item() * inputs.size(0)
+            # Training phase
+            for inputs, targets in train_loader:
+                optimizer.zero_grad()
+                outputs = model(inputs)
+                loss = criterion(outputs.squeeze(), targets)
+                loss.backward()
+                optimizer.step()
+                running_loss += loss.item() * inputs.size(0)
             
-#             epoch_loss = running_loss / len(train_loader.dataset)
+            epoch_loss = running_loss / len(train_loader.dataset)
 
-#             # Validation phase
-#             model.eval()
-#             val_predictions = []
-#             val_targets = []
-#             with torch.no_grad():
-#                 for inputs, targets in val_loader:
-#                     outputs = model(inputs)
-#                     val_predictions.append(outputs.squeeze().cpu().numpy())
-#                     val_targets.append(targets.cpu().numpy())
+            # Validation phase
+            model.eval()
+            val_predictions = []
+            val_targets = []
+            with torch.no_grad():
+                for inputs, targets in val_loader:
+                    outputs = model(inputs)
+                    val_predictions.append(outputs.squeeze().cpu().numpy())
+                    val_targets.append(targets.cpu().numpy())
             
-#             val_predictions = np.concatenate(val_predictions)
-#             val_targets = np.concatenate(val_targets)
-#             mse = mean_squared_error(val_targets, val_predictions)
-#             spearman_corr, _ = spearmanr(val_targets, val_predictions)
+            val_predictions = np.concatenate(val_predictions)
+            val_targets = np.concatenate(val_targets)
+            mse = mean_squared_error(val_targets, val_predictions)
+            spearman_corr, _ = spearmanr(val_targets, val_predictions)
             
-#             print(f"Epoch {epoch + 1}/{num_epochs}, MSE: {mse:.4f}, Spearman Correlation: {spearman_corr:.4f}")
+            print(f"Epoch {epoch + 1}/{num_epochs}, MSE: {mse:.4f}, Spearman Correlation: {spearman_corr:.4f}")
             
-#             # Early stopping check
-#             if mse < best_val_loss:
-#                 best_val_loss = mse
-#                 patience_counter = 0
-#             else:
-#                 patience_counter += 1
+            # Early stopping check
+            if mse < best_val_loss:
+                best_val_loss = mse
+                patience_counter = 0
+            else:
+                patience_counter += 1
             
-#             if patience_counter >= early_stopping_patience:
-#                 print("Early stopping triggered.")
-#                 break
+            if patience_counter >= early_stopping_patience:
+                print("Early stopping triggered.")
+                break
         
-#         spearman_scores.append(spearman_corr)
-#         cv_scores.append(mse)
+        spearman_scores.append(spearman_corr)
+        cv_scores.append(mse)
     
-#     return spearman_scores, cv_scores
+    return spearman_scores, cv_scores
 
 
 
@@ -243,26 +243,26 @@ def train_DKL_wilson(model, X_train, y_train, likelihood,seed, training_iteratio
 
 ## approximate kernel
 
-# def train_inner_loop(model,optimizer, likelihood, epoch, train_loader):
+def train_inner_loop(model,optimizer, likelihood, epoch, train_loader):
 
-#     #n_epochs = 1
+    #n_epochs = 1
     
-#     #scheduler = MultiStepLR(optimizer, milestones=[0.5 * n_epochs, 0.75 * n_epochs], gamma=0.1)
-#     mll = gpytorch.mlls.VariationalELBO(likelihood, model.gp_layer, num_data=len(train_loader.dataset))
-#     model.train()
-#     likelihood.train()
+    #scheduler = MultiStepLR(optimizer, milestones=[0.5 * n_epochs, 0.75 * n_epochs], gamma=0.1)
+    mll = gpytorch.mlls.VariationalELBO(likelihood, model.gp_layer, num_data=len(train_loader.dataset))
+    model.train()
+    likelihood.train()
 
-#     minibatch_iter = tqdm.notebook.tqdm(train_loader, desc=f"(Epoch {epoch}) Minibatch")
-#     with gpytorch.settings.num_likelihood_samples(8):
-#         for data, target in minibatch_iter:
-#             if torch.cuda.is_available():
-#                 data, target = data.cuda(), target.cuda()
-#             optimizer.zero_grad()
-#             output = model(data)
-#             loss = -mll(output, target)
-#             loss.backward()
-#             optimizer.step()
-#             minibatch_iter.set_postfix(loss=loss.item())
+    minibatch_iter = tqdm.notebook.tqdm(train_loader, desc=f"(Epoch {epoch}) Minibatch")
+    with gpytorch.settings.num_likelihood_samples(8):
+        for data, target in minibatch_iter:
+            if torch.cuda.is_available():
+                data, target = data.cuda(), target.cuda()
+            optimizer.zero_grad()
+            output = model(data)
+            loss = -mll(output, target)
+            loss.backward()
+            optimizer.step()
+            minibatch_iter.set_postfix(loss=loss.item())
 
 
 # def test():
@@ -281,35 +281,35 @@ def train_DKL_wilson(model, X_train, y_train, likelihood,seed, training_iteratio
 #         correct, len(test_loader.dataset), 100. * correct / float(len(test_loader.dataset))
 #    ))
 
-# def train_DKL(X, y, model, likelihood, n_epochs):
-#     lr = 0.1
-#     optimizer = SGD([
-#         {'params': model.feature_extractor.parameters(), 'weight_decay': 1e-4},
-#         {'params': model.gp_layer.hyperparameters(), 'lr': lr * 0.01},
-#         {'params': model.gp_layer.variational_parameters()},
-#         {'params': likelihood.parameters()},
-#     ], lr=lr, momentum=0.9, nesterov=True, weight_decay=0)
-#     scheduler = MultiStepLR(optimizer, milestones=[0.5 * n_epochs, 0.75 * n_epochs], gamma=0.1)
+def train_DKL(X, y, model, likelihood, n_epochs):
+    lr = 0.1
+    optimizer = SGD([
+        {'params': model.feature_extractor.parameters(), 'weight_decay': 1e-4},
+        {'params': model.gp_layer.hyperparameters(), 'lr': lr * 0.01},
+        {'params': model.gp_layer.variational_parameters()},
+        {'params': likelihood.parameters()},
+    ], lr=lr, momentum=0.9, nesterov=True, weight_decay=0)
+    scheduler = MultiStepLR(optimizer, milestones=[0.5 * n_epochs, 0.75 * n_epochs], gamma=0.1)
 
-#     X_train_tensor = torch.tensor(X, dtype=torch.float32)
-#     y_train_tensor = torch.tensor(y, dtype=torch.float32)
+    X_train_tensor = torch.tensor(X, dtype=torch.float32)
+    y_train_tensor = torch.tensor(y, dtype=torch.float32)
 
-#     # Step 2: Create a Dataset from tensors
-#     train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
+    # Step 2: Create a Dataset from tensors
+    train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
 
-#     # Step 3: Create a DataLoader
-#     batch_size = 32  # You can set the batch size to whatever is appropriate for your task
-#     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    # Step 3: Create a DataLoader
+    batch_size = 32  # You can set the batch size to whatever is appropriate for your task
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 
 
-#     for epoch in range(1, n_epochs + 1):
-#         with gpytorch.settings.use_toeplitz(False):
-#             train_inner_loop(model,optimizer, likelihood, epoch, train_loader)
-#             #test()
-#         scheduler.step()
-#     #state_dict = model.state_dict()
-#     #likelihood_state_dict = likelihood.state_dict()
-#     #torch.save({'model': state_dict, 'likelihood': likelihood_state_dict}, 'dkl_cifar_checkpoint.dat')
+    for epoch in range(1, n_epochs + 1):
+        with gpytorch.settings.use_toeplitz(False):
+            train_inner_loop(model,optimizer, likelihood, epoch, train_loader)
+            #test()
+        scheduler.step()
+    #state_dict = model.state_dict()
+    #likelihood_state_dict = likelihood.state_dict()
+    #torch.save({'model': state_dict, 'likelihood': likelihood_state_dict}, 'dkl_cifar_checkpoint.dat')
 
 
 

@@ -1,6 +1,8 @@
 */venv/*
 
 **/ray_results/
+**/testing_dir/
+**/test_job_logs/
 
 
 **/data/
