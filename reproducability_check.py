@@ -117,7 +117,7 @@ def compare_files_in_subdirs(dir1, dir2):
         print()
 
 # Example usage
-dir1 = '/home/fr/fr_fr/fr_zs53/DKL/metaPBT-2.0/testing_dir/20240912_182810_PPO_gravity_0.0025_pb2_Size4_CARLMountainCar_timesteps_total'#'/home/fr/fr_fr/fr_zs53/DKL/metaPBT-2.0/testing_dir/20240912_134948_0_pb2_dkl_Size_4_repro_test_toy_func'
-dir2 = '/home/fr/fr_fr/fr_zs53/DKL/metaPBT-2.0/testing_dir/20240912_183420_PPO_gravity_0.0025_pb2_Size4_CARLMountainCar_timesteps_total'#'/home/fr/fr_fr/fr_zs53/DKL/metaPBT-2.0/testing_dir/20240912_135204_0_pb2_dkl_Size_4_repro_test_toy_func'
+dir1 = '/home/fr/fr_fr/fr_zs53/DKL/metaPBT-2.0/testing_dir/2024-09-19_18:46:37_PPO_gravity_1.0_metadkl_Size4_CARLCartPole_timesteps_total'#'/home/fr/fr_fr/fr_zs53/DKL/metaPBT-2.0/testing_dir/20240912_134948_0_pb2_dkl_Size_4_repro_test_toy_func'
+dir2 = '/home/fr/fr_fr/fr_zs53/DKL/metaPBT-2.0/testing_dir/2024-09-12_20:58:29_PPO_length_0.05_pb2_Size4_CARLCartPole_timesteps_total'#'/home/fr/fr_fr/fr_zs53/DKL/metaPBT-2.0/testing_dir/20240912_135204_0_pb2_dkl_Size_4_repro_test_toy_func'
 
 compare_files_in_subdirs(dir1, dir2)

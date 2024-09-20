@@ -21,30 +21,30 @@ echo $cluster_logs_dir
 
 cd /home/fr/fr_fr/fr_zs53/DKL/metaPBT-2.0/
 
-# kwargs="--ws_dir=$cluster_logs_dir --seed=0 --num_samples=8 --method=pb2 --context='{\"gravity\":0.00025}'"
-# echo $kwargs
-# python3 -m ppo_ray_example $kwargs
+kwargs="--ws_dir=$cluster_logs_dir --seed=0 --num_samples=8 --method=pb2 --context='{\"gravity\":0.00025}'"
+echo $kwargs
+python3 -m ppo_ray_example $kwargs
 
-# kwargs="--ws_dir=$cluster_logs_dir --seed=1 --num_samples=8 --method=pb2 --context='{\"gravity\":0.00025}'"
-# python3 -m ppo_ray_example $kwargs
+kwargs="--ws_dir=$cluster_logs_dir --seed=1 --num_samples=8 --method=pb2 --context='{\"gravity\":0.00025}'"
+python3 -m ppo_ray_example $kwargs
 
-# kwargs="--ws_dir=$cluster_logs_dir --seed=2 --num_samples=8 --method=pb2 --context='{\"gravity\":0.00025}'"
-# python3 -m ppo_ray_example $kwargs
+kwargs="--ws_dir=$cluster_logs_dir --seed=2 --num_samples=8 --method=pb2 --context='{\"gravity\":0.00025}'"
+python3 -m ppo_ray_example $kwargs
 
-# kwargs="--ws_dir=$cluster_logs_dir --seed=3 --num_samples=8 --method=pb2 --context='{\"gravity\":0.00025}'"
-# python3 -m ppo_ray_example $kwargs
+kwargs="--ws_dir=$cluster_logs_dir --seed=3 --num_samples=8 --method=pb2 --context='{\"gravity\":0.00025}'"
+python3 -m ppo_ray_example $kwargs
 
-# kwargs="--ws_dir=$cluster_logs_dir --seed=4 --num_samples=8 --method=pb2 --context='{\"gravity\":0.00025}'"
-# python3 -m ppo_ray_example $kwargs
+kwargs="--ws_dir=$cluster_logs_dir --seed=4 --num_samples=8 --method=pb2 --context='{\"gravity\":0.00025}'"
+python3 -m ppo_ray_example $kwargs
 
-# kwargs="--ws_dir=$cluster_logs_dir --seed=5 --num_samples=8 --method=pb2 --context='{\"gravity\":0.00025}'"
-# python3 -m ppo_ray_example $kwargs
+kwargs="--ws_dir=$cluster_logs_dir --seed=5 --num_samples=8 --method=pb2 --context='{\"gravity\":0.00025}'"
+python3 -m ppo_ray_example $kwargs
 
-# kwargs="--ws_dir=$cluster_logs_dir --seed=6 --num_samples=8 --method=pb2 --context='{\"gravity\":0.00025}'"
-# python3 -m ppo_ray_example $kwargs
+kwargs="--ws_dir=$cluster_logs_dir --seed=6 --num_samples=8 --method=pb2 --context='{\"gravity\":0.00025}'"
+python3 -m ppo_ray_example $kwargs
 
-# kwargs="--ws_dir=$cluster_logs_dir --seed=7 --num_samples=8 --method=pb2 --context='{\"gravity\":0.00025}'"
-# python3 -m ppo_ray_example $kwargs
+kwargs="--ws_dir=$cluster_logs_dir --seed=7 --num_samples=8 --method=pb2 --context='{\"gravity\":0.00025}'"
+python3 -m ppo_ray_example $kwargs
 
 kwargs="--ws_dir=$cluster_logs_dir --seed=8 --num_samples=8 --method=pb2 --context='{\"gravity\":0.00025}'"
 python3 -m ppo_ray_example $kwargs

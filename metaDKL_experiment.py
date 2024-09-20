@@ -15,12 +15,12 @@ import numpy as np
 import pandas as pd
 from ray.tune.registry import register_env
 import torch
-from DKL.PB2_DKL import PB2_dkl
+from DKL.pretraining_dkl import PB2_dkl_pretrained
 from ray.tune import run, sample_from
 from ray.tune.schedulers import PopulationBasedTraining
 from ray.tune.schedulers.pb2 import PB2
 from ray.rllib.algorithms import ppo
-
+from copy import deepcopy
 from CARL_env_reg_wrapper import CARLWrapper
 
 
@@ -64,7 +64,21 @@ def env_creator(env_config):
         raise NotImplementedError
     return env(contexts={0:env_config})
 
+def generate_sampler(seed, dist_type, bounds_tuple, num_samples):
+            # loguniform_dist = tune.loguniform(1e-5, 1e-3)
+        # samples_lr = [loguniform_dist.sample() for _ in range(args.num_samples)]
+        
+        # sample_iter_lr = iter(samples_lr)
+        # get_lr_sample = lambda: next(sample_iter_lr)
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
 
+        dist = dist_type(bounds_tuple[0], bounds_tuple[1])
+        samples = [dist.sample() for _ in range(num_samples)]
+        sample_iterator = iter(samples)
+        get_sample_func = lambda: next(sample_iterator)
+        return get_sample_func
 
 if __name__ == "__main__":
 
@@ -72,7 +86,7 @@ if __name__ == "__main__":
     parser.add_argument("--max", type=int, default=1000_000)
     parser.add_argument("--algo", type=str, default="PPO")
     parser.add_argument("--num_workers", type=int, default=4)
-    parser.add_argument("--num_samples", type=int, default=1)
+    parser.add_argument("--num_samples", type=int, default=4)
     parser.add_argument("--t_ready", type=int, default=500_00)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--context", type=str, default='{"gravity":1.0}')
@@ -88,10 +102,11 @@ if __name__ == "__main__":
         "--net", type=str, default="32_32"
     )  # May be important to use a larger network for bigger tasks.
     parser.add_argument("--filename", type=str, default="")
-    parser.add_argument("--scheduler", type=str, default="pb2")  # ['pbt', 'pb2']
+    parser.add_argument("--scheduler", type=str, default="metadkl")  # ['pbt', 'pb2']
     parser.add_argument("--save_csv", type=bool, default=True)
     parser.add_argument('--ws_dir', type=str, default=r'/home/fr/fr_fr/fr_zs53/DKL/metaPBT-2.0/testing_dir')
     parser.add_argument('--metric', type=str, default='env_runners/episode_reward_mean')
+    parser.add_argument('--metadata_dir_list', nargs='+', help='List of directories', required=True)
 
     args = parser.parse_args()
     context = json.loads(args.context.replace("'", ""))
@@ -100,7 +115,7 @@ if __name__ == "__main__":
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     
-    try:
+    if True:
         register_env( args.env_name, env_creator)
 
 
@@ -122,7 +137,12 @@ if __name__ == "__main__":
             args.criteria,
         ))
 
-        pb2_dkl=PB2_dkl(
+        # meta_data_dir_list = ['/home/fr/fr_fr/fr_zs53/DKL/metaPBT-2.0/testing_dir/2024-09-12_19:58:08_PPO_length_0.05_pb2_Size4_CARLCartPole_timesteps_total/pb2_CARLCartPole_seed0_length_0.05',
+        #                       '/pfs/work7/workspace/scratch/fr_zs53-dkl_exps/cluster_logs/pb2.gravity.c1/2024-09-15_18:44:38_PPO_gravity_0.9800000000000001_pb2_Size8_CARLCartPole_timesteps_total/pb2_CARLCartPole_seed0_gravity_0.9800000000000001']
+
+        meta_data_dir_list = args.metadata_dir_list
+        print(meta_data_dir_list)
+        pb2_metadkl=PB2_dkl_pretrained(
             time_attr=args.criteria,
             #metric=args.metric,
             #mode="max",
@@ -138,30 +158,15 @@ if __name__ == "__main__":
                 #"train_batch_size": [1000, 60000],
             },
             seed=args.seed,
-            synch=True
+            synch=True,
+            meta_data_dir_list=meta_data_dir_list,
+            current_env_config=deepcopy(context_)
             #save_path=args.dir
-        
         )
-        pb2 = PB2(
-            time_attr=args.criteria,
-            #metric=args.metric,
-            #mode="max",
-            perturbation_interval=args.t_ready,
-            #quantile_fraction=args.perturb,  # copy bottom % with top %
-            # Specifies the hyperparam search space
-            hyperparam_bounds={
-                #"lambda": [0.9, 1.0],
-                #"clip_param": [0.1, 0.5],
-                #'gamma': [0.9,0.99],
-                "lr": [1e-5, 1e-3],
-                #"train_batch_size": [1000, 10_000],
-                'num_sgd_iter': [3,30]
-                #'entropy_coeff' : [0.01, 0.5]
-            },
-            synch=True
-                    )
+        
 
-        schedulers = { "pb2": pb2, 'pb2_dkl':pb2_dkl}
+
+        schedulers = { 'metadkl':pb2_metadkl}
         # # LR SAMPLER
         # loguniform_dist = tune.loguniform(1e-5, 1e-3)
         # samples_lr = [loguniform_dist.sample() for _ in range(args.num_samples)]
@@ -175,13 +180,16 @@ if __name__ == "__main__":
         config.seed = args.seed
         config.rollouts(num_envs_per_worker=1)
         config.training(
-            lr=tune.loguniform(1e-5, 1e-3),
+            #lr= tune.sample_from(generate_sampler(args.seed, tune.loguniform, (1e-5, 1e-3), args.num_samples)), #tune.loguniform(1e-5, 1e-3),
             #kl_coeff = 1.0,
-            num_sgd_iter = tune.qrandint(3,30)
+            #num_sgd_iter = tune.qrandint(3,30)#tune.sample_from(generate_sampler(args.seed,tune.qrandint, (3,30), args.num_samples))#tune.qrandint(3,30)
             #sgd_minibatch_size = tune.choice([128, 512, 2000]),
             #train_batch_size= tune.qrandint(1000,10_000),#tune.choice([1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10_000]),
             #gamma=tune.uniform(0.9, 0.99),
         #entropy_coeff=tune.uniform(0.01, 0.5),
+                    lr=tune.loguniform(1e-5, 1e-3),
+            #kl_coeff = 1.0,
+            num_sgd_iter = tune.qrandint(3,30)
 
         )
         run_name= "{}_{}_seed{}_{}".format(
@@ -199,7 +207,12 @@ if __name__ == "__main__":
             ),
             param_space=config,
             run_config=train.RunConfig(name=run_name
-                                       ,stop={args.criteria: args.max}, storage_path=args.dir),
+                                       ,stop={args.criteria: args.max}, storage_path=args.dir,
+                                       failure_config=train.FailureConfig(
+            fail_fast=True  
+        )),
+                                       
+            
         )
         results_grid = tuner.fit()
         best_result = results_grid.get_best_result(metric=args.metric, mode="max")
@@ -220,5 +233,5 @@ if __name__ == "__main__":
         plt.xlabel("Timesteps")
         plt.ylabel("Rewards")
         plt.savefig(os.path.join(args.dir,run_name,'best_agent.png'))
-    except Exception as e:
-        print(e)
+    # except Exception as e:
+    #     print(e)

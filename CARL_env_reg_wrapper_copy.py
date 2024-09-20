@@ -61,6 +61,13 @@ class CARLMountainCarContWrapper(CARLWrapperBase):
 class CARLPendulumWrapper(CARLWrapperBase):
     def __init__(self, *args, **kwargs):
         super().__init__(CARLPendulum, *args, **kwargs)
+    def step(self, action):
+        obs_context, r, term, trun, info = self.env.step(action)
+        obs = obs_context['obs']
+        self.state = obs
+        print(obs_context, r, term, trun, info )
+        return obs, r, term, trun, info
+    
 
 
 env_config =  {'env_config': {'gravity': 0.01}, 'env_name': 'CARLMountainCar'}
