@@ -21,7 +21,6 @@ from ray.tune.schedulers import PopulationBasedTraining
 from ray.tune.schedulers.pb2 import PB2
 from ray.rllib.algorithms import ppo
 
-from CARL_env_reg_wrapper import CARLWrapper
 
 
 def dict_to_path_string(params):
@@ -51,15 +50,19 @@ def env_creator(env_config):
     print(env_config)
     env_name = env_config.pop('env_name')
     if env_name == 'CARLCartPole':
-        from CARL_env_reg_wrapper_copy import CARLCartPoleWrapper as env
+        from CARLWrapper import CARLCartPoleWrapper as env
     elif env_name == 'CARLMountainCar':
-        from CARL_env_reg_wrapper_copy import CARLMountainCarWrapper as env
+        from CARLWrapper import CARLMountainCarWrapper as env
     elif env_name == 'CARLMountainCarCont':
-        from CARL_env_reg_wrapper_copy import CARLMountainCarContWrapper as env
+        from CARLWrapper import CARLMountainCarContWrapper as env
     elif env_name == 'CARLAcrobot':
-        from CARL_env_reg_wrapper_copy import CARLAcrobotWrapper as env
+        from CARLWrapper import CARLAcrobotWrapper as env
     elif env_name == 'CARLPendulum':
-        from CARL_env_reg_wrapper_copy import CARLPendulumWrapper as env
+        from CARLWrapper import CARLPendulumWrapper as env
+    elif env_name == 'CARLLunarLander':
+        from CARLWrapper import CARLLunarLanderWrapper as env
+    elif env_name == 'CARLBipedalWalker':
+        from CARLWrapper import CARLBipedalWalkerWrapper as env
     else:
         raise NotImplementedError
     return env(contexts={0:env_config})
@@ -69,18 +72,18 @@ def env_creator(env_config):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--max", type=int, default=1000_000)
+    parser.add_argument("--max", type=int, default=10_000)
     parser.add_argument("--algo", type=str, default="PPO")
     parser.add_argument("--num_workers", type=int, default=4)
-    parser.add_argument("--num_samples", type=int, default=1)
-    parser.add_argument("--t_ready", type=int, default=500_00)
+    parser.add_argument("--num_samples", type=int, default=4)
+    parser.add_argument("--t_ready", type=int, default=5000)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--context", type=str, default='{"gravity":1.0}')
+    parser.add_argument("--context", type=str, default='{"GRAVITY_X":10}')
     parser.add_argument(
         "--horizon", type=int, default=1600
     )  # make this 1000 for other envs
     parser.add_argument("--perturb", type=float, default=0.25)  # if using PBT
-    parser.add_argument("--env_name", type=str, default="CARLMountainCar") #"CartPole-v1"
+    parser.add_argument("--env_name", type=str, default="CARLLunarLander") #"CartPole-v1"
     parser.add_argument(
         "--criteria", type=str, default="timesteps_total"
     )  # "training_iteration", "time_total_s"
@@ -92,7 +95,7 @@ if __name__ == "__main__":
     parser.add_argument("--save_csv", type=bool, default=True)
     parser.add_argument('--ws_dir', type=str, default=r'/home/fr/fr_fr/fr_zs53/DKL/metaPBT-2.0/testing_dir')
     parser.add_argument('--metric', type=str, default='env_runners/episode_reward_mean')
-
+    parser.add_argument('--smoke_test', type=bool, default=False)
     args = parser.parse_args()
     context = json.loads(args.context.replace("'", ""))
     context_= context | {'env_name':args.env_name}  # includes env name for the env creator
@@ -104,23 +107,32 @@ if __name__ == "__main__":
         register_env( args.env_name, env_creator)
 
 
-        if args.env_name in ["BipedalWalker-v2", "BipedalWalker-v3"]:
+        if args.env_name =='CARLBipedalWalker':
             horizon = 1600
         else:
             horizon = 1000
 
         timelog = datetime.now().strftime("%Y-%m-%d_%H:%M:%S")
+        if args.smoke_test:
 
+            args.dir = os.path.join(args.ws_dir , "{}_{}_{}_Size{}_{}_{}".format(
+                timelog,
+                args.env_name,
+                dict_to_path_string(context),
+                args.scheduler,
+                str(args.num_samples),
+                args.criteria,
+            ))
+        else:
+            
+            args.dir = os.path.join(args.ws_dir , "{}_{}_{}_Size_{}_{}".format(
+                args.env_name,
+                dict_to_path_string(context),
+                args.scheduler,
+                str(args.num_samples),
+                args.criteria,
+            ))
 
-        args.dir = os.path.join(args.ws_dir , "{}_{}_{}_{}_Size{}_{}_{}".format(
-            timelog,
-            args.algo,
-            dict_to_path_string(context),
-            args.scheduler,
-            str(args.num_samples),
-            args.env_name,
-            args.criteria,
-        ))
 
         pb2_dkl=PB2_dkl(
             time_attr=args.criteria,
@@ -150,8 +162,8 @@ if __name__ == "__main__":
             #quantile_fraction=args.perturb,  # copy bottom % with top %
             # Specifies the hyperparam search space
             hyperparam_bounds={
-                #"lambda": [0.9, 1.0],
-                #"clip_param": [0.1, 0.5],
+                "lambda_": [0.9, 0.99],
+                "clip_param": [0.1, 0.5],
                 #'gamma': [0.9,0.99],
                 "lr": [1e-5, 1e-3],
                 #"train_batch_size": [1000, 10_000],
@@ -177,6 +189,8 @@ if __name__ == "__main__":
         config.training(
             lr=tune.loguniform(1e-5, 1e-3),
             #kl_coeff = 1.0,
+            clip_param = tune.uniform(0.1, 0.5),
+            lambda_ = tune.uniform(0.9, 0.99),
             num_sgd_iter = tune.qrandint(3,30)
             #sgd_minibatch_size = tune.choice([128, 512, 2000]),
             #train_batch_size= tune.qrandint(1000,10_000),#tune.choice([1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10_000]),
@@ -184,8 +198,18 @@ if __name__ == "__main__":
         #entropy_coeff=tune.uniform(0.01, 0.5),
 
         )
-        run_name= "{}_{}_seed{}_{}".format(
-                args.scheduler, args.env_name, str(args.seed), dict_to_path_string(context)
+        if args.env_name == 'CARLPendulum':
+            config.training(
+            lr=tune.loguniform(1e-5, 1e-3),
+            #kl_coeff = 1.0,
+            num_sgd_iter = tune.qrandint(3,30),
+            vf_clip_param= 10.0
+
+        )
+        
+            
+        run_name= "seed{}".format(
+                 str(args.seed)
             )
         #config.debugging(log_level ="WARN")
         tuner = tune.Tuner(
@@ -198,8 +222,14 @@ if __name__ == "__main__":
             
             ),
             param_space=config,
+            # run_config=train.RunConfig(name=run_name
+            #                            ,stop={args.criteria: args.max}, storage_path=args.dir),
+
             run_config=train.RunConfig(name=run_name
-                                       ,stop={args.criteria: args.max}, storage_path=args.dir),
+                                       ,stop={args.criteria: args.max}, storage_path=args.dir,
+                                       failure_config=train.FailureConfig(
+            fail_fast=True  
+        ))
         )
         results_grid = tuner.fit()
         best_result = results_grid.get_best_result(metric=args.metric, mode="max")

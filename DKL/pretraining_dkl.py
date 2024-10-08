@@ -12,7 +12,7 @@ from ray.tune.schedulers.pbt import _PBTTrialState
 from ray.tune.utils.util import flatten_dict, unflatten_dict
 from ray.util.debug import log_once
 #from DKL.PB2_DKL_utils import train_DKL_wilson, UCB_DKL,optimize_acq_DKL
-from DKL.pretraining_dkl_utils import pretrain_neural_network_model_with_val, metatrain_DKL_wilson, UCB_DKL,optimize_acq_DKL, process_metadata, pretrain_neural_network_model_with_sched
+from DKL.pretraining_dkl_utils import metatrain_DKL_wilson, UCB_DKL,optimize_acq_DKL, process_metadata, pretrain_neural_network_model_with_sched
 import math
 import torch
 import gpytorch
@@ -57,12 +57,13 @@ import random
 import numpy as np
 
 class LargeFeatureExtractor(nn.Module):
-    def __init__(self, data_dim, seed):
+    def __init__(self, data_dim, seed, joint_gp_training_phase=False):
         super(LargeFeatureExtractor, self).__init__()
         self.seed = seed
         random.seed(self.seed)
         np.random.seed(self.seed)
         torch.manual_seed(self.seed)
+        self.joint_gp_training_phase=joint_gp_training_phase
         
         # Define the layers
         self.linear1 = nn.Linear(data_dim, 1000)
@@ -74,7 +75,6 @@ class LargeFeatureExtractor(nn.Module):
         self.linear4 = nn.Linear(50, 2)  # Output size of 2 for feature extraction
         
         # Additional layers for forward pass beyond extract
-        self.final_relu = nn.ReLU()
         self.final_linear = nn.Linear(50, 1)  # Final output layer (1 output)
 
     def extract(self, x):
@@ -96,62 +96,14 @@ class LargeFeatureExtractor(nn.Module):
         x = self.relu2(x)
         x = self.linear3(x)
         x = self.relu3(x)
-        x = self.final_relu(x)  # ReLU after linear3
-        x = self.final_linear(x)  # Output size 1
+        if not self.joint_gp_training_phase:
+            x = self.final_linear(x)  # Output size 1
+        else:
+            x = self.linear4(x)
+            
         return x
 
-# class LargeFeatureExtractor(torch.nn.Sequential):
-    
-#     def __init__(self, data_dim,seed):
-#         self.seed = seed
-#         random.seed(self.seed)
-#         np.random.seed(self.seed)
-#         torch.manual_seed(self.seed)
-#         super(LargeFeatureExtractor, self).__init__()
-#         self.add_module('linear1', torch.nn.Linear(data_dim, 1000))
-#         self.add_module('relu1', torch.nn.ReLU())
-#         self.add_module('linear2', torch.nn.Linear(1000, 500))
-#         self.add_module('relu2', torch.nn.ReLU())
-#         self.add_module('linear3', torch.nn.Linear(500, 50))
-#         self.add_module('relu3', torch.nn.ReLU())
-#         self.add_module('linear4', torch.nn.Linear(50, 2))
-#         self.add_module('relu3', torch.nn.ReLU())
-#         self.add_module('linear5', torch.nn.Linear(50, 1))
-#     def extract(self, x):
-#         x = self.linear1(x)  # Pass through the first linear layer
-#         x = self.relu1(x)    # Apply the ReLU activation
-#         x = self.linear2(x)  # Pass through the second linear layer
-#         x = self.relu2(x)    # Apply the ReLU activation
-#         x = self.linear3(x)  # Pass through the third linear layer
-#         x = self.relu3(x)    # Apply the ReLU activation
-#         x = self.linear4(x)  # Pass through the final linear layer (50 -> 2)
-#         return x  # Return the final output after processing
-    
-        
-        
 
-# class NeuralNetworkHeart(nn.Module):
-#     def __init__(self, input_dim, output_dim = 1):
-#         self.input_dim = input_dim
-#         super(NeuralNetworkHeart, self).__init__()
-#         self.layer1 = nn.Linear(input_dim, 50)
-#         self.layer2 = nn.Linear(50, 50)
-#         self.layer3 = nn.Linear(50, 50)
-#         self.layer4 = nn.Linear(50, output_dim)
-#         self.tanh = nn.Tanh()
-    
-#     def forward(self, x):
-#         x = self.tanh(self.layer1(x))
-#         x = self.tanh(self.layer2(x))
-#         x = self.tanh(self.layer3(x))
-#         x = self.layer4(x)
-#         return x
-    
-#     def feature_extractor(self, x):
-#         x = self.tanh(self.layer1(x))
-#         x = self.tanh(self.layer2(x))
-#         x = self.tanh(self.layer3(x))
-#         return x
 
 
 def _fill_config(
@@ -166,7 +118,7 @@ def _fill_config(
 
     Returns the dict of filled hyperparameters.
     """
-    np.random.seed(seed)
+    #np.random.seed(seed)
     filled_hyperparams = {}
     for param_name, bounds in hyperparam_bounds.items():
         if isinstance(bounds, dict):
@@ -191,7 +143,8 @@ class GPRegressionModel_DKL(gpytorch.models.ExactGP):
 
         
 
-        def __init__(self, train_x, train_y, likelihood, seed,feature_extractor= None):
+        def __init__(self, train_x, train_y, likelihood, seed,feature_extractor : LargeFeatureExtractor, append_sim_column=True):
+            
             self.seed=seed
             random.seed(self.seed)
             np.random.seed(self.seed)
@@ -204,11 +157,14 @@ class GPRegressionModel_DKL(gpytorch.models.ExactGP):
                 # TODO set batch size??
                 num_dims=2, grid_size=100
             )
+            
             self.feature_extractor = feature_extractor
             self.X = train_x
+            self.append_sim_column=append_sim_column 
 
             # This module will scale the NN features so that they're nice values
-            self.scale_to_bounds = gpytorch.utils.grid.ScaleToBounds(0, 1.) # was -1 but changed to match the other parts  
+            self.scale_to_bounds = gpytorch.utils.grid.ScaleToBounds(0, 1.)
+            # was -1 but changed to match the other parts  
 
         def forward(self, x):
             random.seed(self.seed)
@@ -217,8 +173,12 @@ class GPRegressionModel_DKL(gpytorch.models.ExactGP):
             # We're first putting our data through a deep net (feature extractor)
             zeros_column = torch.zeros(x.shape[0], 1)
             # Concatenate the zeros column to the original tensor
-            train_x = torch.cat((x, zeros_column), dim=1)
-            projected_x = self.feature_extractor.extract(train_x)
+            if self.append_sim_column:
+                train_x = torch.cat((x, zeros_column), dim=1)
+            else:
+                train_x=x
+            self.feature_extractor.joint_gp_training_phase = True
+            projected_x = self.feature_extractor(train_x)
             projected_x = self.scale_to_bounds(projected_x)  # Make the NN values "nice"
 
             mean_x = self.mean_module(projected_x)
@@ -299,6 +259,7 @@ def _select_config(
     
     m = GPRegressionModel_DKL(train_x, train_y, feature_extractor=neural_network, likelihood=likelihood,seed=seed)
     m_trained, mll_m ,l= metatrain_DKL_wilson(model=m, X_train=train_x, y_train=train_y, likelihood=likelihood,seed=seed)
+    
 
     # if there are current runs you must freeze the neural network heart in order 
     # not to corrupt it with the fake values
@@ -438,7 +399,8 @@ class PB2_dkl_pretrained(PopulationBasedTraining):
         seed:int =None,
         meta_data_dir_list: list=None,
         current_env_config: dict =None,
-        num_extra_info_dims: int = 1
+        num_extra_info_dims: int = 1,
+        warmstart_only: bool = False
         
         
         #num_inputs: int = 2 
@@ -489,6 +451,7 @@ class PB2_dkl_pretrained(PopulationBasedTraining):
         self._hyperparam_bounds_flat = flatten_dict(
             hyperparam_bounds, prevent_delimiter=True
         )
+        self.warmstart_only = warmstart_only
         self._validate_hyperparam_bounds(self._hyperparam_bounds_flat)
 
         # Current = trials running that have already re-started after reaching

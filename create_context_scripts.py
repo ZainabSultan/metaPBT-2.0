@@ -1,22 +1,75 @@
 import os
 import numpy as np
-# USAGE chzahnhge env name, featurename 
+# USAGE change env name, featurename 
 # Directory where the files will be created
 
 ## chnage these
-feature='length'
-env_name='CARLCartPole'
+feature='GRAVITY_Y'
+env_name='CARLLunarLander'
 
+difficult_envs = ['CARLBipedalWalker', 'CARLLunarLander']
 
-
-directory = '/home/fr/fr_fr/fr_zs53/DKL/metaPBT-2.0/pb2_job_scripts/holder/{feature}'.format(feature=feature)
+directory = f'/home/fr/fr_fr/fr_zs53/DKL/metaPBT-2.0/pb2_job_scripts/{env_name}/{feature}/'
 defaults_cartpole={'length':0.5, 'tau':0.02, 'gravity':9.8}
 defaults_mcd={'gravity': 0.0025}
+defaults_lunar_lander = {
+    "FPS": 50,
+    "SCALE": 30.0,
+    "MAIN_ENGINE_POWER": 13.0,
+    "SIDE_ENGINE_POWER": 0.6,
+    "INITIAL_RANDOM": 1000.0,
+    "GRAVITY_X": 0,
+    "GRAVITY_Y": -10,
+    "LEG_AWAY": 20,
+    "LEG_DOWN": 18,
+    "LEG_W": 2,
+    "LEG_H": 8,
+    "LEG_SPRING_TORQUE": 40,
+    "SIDE_ENGINE_HEIGHT": 14.0,
+    "SIDE_ENGINE_AWAY": 12.0,
+    "VIEWPORT_W": 600,
+    "VIEWPORT_H": 400
+}
+defaults_bipedal = {
+    "FPS": 50,
+    "SCALE": 30.0,
+    "GRAVITY_X": 0,
+    "GRAVITY_Y": -10,
+    "FRICTION": 2.5,
+    "TERRAIN_STEP": 14 / 30.0,
+    "TERRAIN_LENGTH": 200,
+    "TERRAIN_HEIGHT": 600 / 30 / 4,
+    "TERRAIN_GRASS": 10,
+    "TERRAIN_STARTPAD": 20,
+    "MOTORS_TORQUE": 80,
+    "SPEED_HIP": 4,
+    "SPEED_KNEE": 6,
+    "LIDAR_RANGE": 160 / 30.0,
+    "LEG_DOWN": -8 / 30.0,
+    "LEG_W": 8 / 30.0,
+    "LEG_H": 34 / 30.0,
+    "INITIAL_RANDOM": 5,
+    "VIEWPORT_W": 600,
+    "VIEWPORT_H": 400
+}
+
 if env_name == 'CARLMountainCar':
     DEFAULT_VALUE = defaults_mcd[feature]
 elif env_name=='CARLCartPole':
     DEFAULT_VALUE = defaults_cartpole[feature]
+elif env_name=='CARLBipedalWalker':
+    DEFAULT_VALUE = defaults_bipedal[feature]
+elif env_name=='CARLLunarLander':
+    DEFAULT_VALUE = defaults_lunar_lander[feature]
 
+if env_name in difficult_envs:
+    max=1000_000
+    t_ready = 50_000
+    time='30:00:00'
+else:
+    max=100_000
+    t_ready = 50_00
+    time='3:00:00'
 #cartpo9le
 # tau 0.02
 # pole lenght 0.5
@@ -39,9 +92,8 @@ for i, value in enumerate(feature_values, start=1):
 #SBATCH --ntasks=1                  # Number of tasks (or processes) per node
 #SBATCH --cpus-per-task=8           # Number of CPU cores per task
 ##SBATCH --gres=gpu:1                # Number of GPUS
-#SBATCH --time=30:00:00             # Wall time limit (hh:mm:ss)
+#SBATCH --time={time}            # Wall time limit (hh:mm:ss)
 
-##SBATCH --mem-per-cpu=2GB           # Memory per CPU core
 #SBATCH --mem-per-cpu=4GB           # Memory per CPU core
 ##SBATCH --mem-per-cpu=5GB
 
@@ -66,7 +118,7 @@ cd /home/fr/fr_fr/fr_zs53/DKL/metaPBT-2.0/
 # Loop over seeds and run jobs with the same context
 context='{{"{feature}":{value}}}'
 for seed in {{0..9}}; do
-    kwargs="--ws_dir=$tmp_logs_dir --seed=$seed --env_name={env_name} --num_samples=8 --scheduler=pb2 --context='$context'"
+    kwargs="--ws_dir=$tmp_logs_dir --seed=$seed --env_name={env_name} --num_samples=8 --scheduler=pb2 --context='$context' --max={max} --t_ready={t_ready}"
     echo "Running job with seed=$seed and context=$context"
     python3 -m DKL_experiment $kwargs
 done

@@ -102,9 +102,26 @@ def _fill_config(
     return filled_hyperparams
 
 
-class GPRegressionModel_DKL(gpytorch.models.ExactGP):
+class MultiTaskGPModel_DKL(gpytorch.models.ApproximateGP): # approx vs exact
+    def __init__(self, inducing_points, input_dim, num_tasks, feature_extractor):
+        super(MultiTaskGPModel_DKL, self).__init__(gpytorch.variational.CholeskyVariationalDistribution(inducing_points.size(0)))
 
-        
+        self.num_tasks = num_tasks
+        self.inducing_points = inducing_points
+        self.feature_extractor = feature_extractor
+
+        # Task-specific GPs
+        self.gp_layers = nn.ModuleList([
+            gpytorch.kernels.RBFKernel(ard_num_dims=input_dim) for _ in range(num_tasks)
+        ])
+
+    def forward(self, x):
+        z = self.feature_extractor(x)  # Extract features
+        return [gp_layer(z) for gp_layer in self.gp_layers]
+    
+
+
+class GPRegressionModel_DKL(gpytorch.models.ExactGP):
 
         def __init__(self, train_x, train_y, likelihood, seed,feature_extractor= None):
             self.seed=seed

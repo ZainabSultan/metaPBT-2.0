@@ -28,7 +28,7 @@ conda activate dkl_env
 
 ##python3 -m ppo_ray_example $kwargs # --experiment-name=$SLURM_JOB_NAME --n-workers=$SLURM_CPUS_PER_TASK --device="cuda" # --warmstart-smbo
 
-
+# reserve whole node
 
 kwargs="--ws_dir=$cluster_logs_dir --seed=0 --num_samples=8 --context='{"gravity": 0.00325}'"
 python3 -m ppo_ray_example $kwargs

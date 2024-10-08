@@ -187,7 +187,7 @@ if __name__ == "__main__":
             #train_batch_size= tune.qrandint(1000,10_000),#tune.choice([1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10_000]),
             #gamma=tune.uniform(0.9, 0.99),
         #entropy_coeff=tune.uniform(0.01, 0.5),
-                    lr=tune.loguniform(1e-5, 1e-3),
+            lr=tune.loguniform(1e-5, 1e-3),
             #kl_coeff = 1.0,
             num_sgd_iter = tune.qrandint(3,30)
 

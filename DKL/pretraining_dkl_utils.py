@@ -10,6 +10,7 @@ import torch
 from ray.tune.utils.util import flatten_dict
 import os
 import json
+from sklearn.preprocessing import StandardScaler, Normalizer
 import pandas as pd
 from torch.utils.data import DataLoader, TensorDataset
 import tqdm.notebook
@@ -27,15 +28,22 @@ import torch
 import numpy as np
 import random
 import torch.nn as nn
+import tracemalloc
+from ray import train
 from ray.tune.schedulers.pb2_utils import (
 
         normalize,
 
-        standardize,
+        #standardize,
         
     )
 
+import matplotlib.pyplot as plt
 
+def standardize(data):
+    """Standardize to be Gaussian N(0,1). Clip final values."""
+    data = (data - np.mean(data, axis=0)) / (np.std(data, axis=0) + 1e-8)
+    return data
 
 def optimize_acq_DKL(func, m, m1,l,l1, fixed, num_f, seed):
     random.seed(seed)
@@ -123,15 +131,35 @@ def predict(model, likelihood, x):
 
 
 
-def metatrain_DKL_wilson(model, X_train, y_train, likelihood,seed, training_iterations=100, freeze=False, warm_start_only=True):
+import torch
+import gpytorch
+import random
+import numpy as np
+import matplotlib.pyplot as plt
+import tqdm
+import logging
 
+logger = logging.getLogger(__name__)
+
+def metatrain_DKL_wilson(model, X_train, y_train, likelihood, seed, 
+                         training_iterations=100, freeze=False, 
+                         warm_start_only=False, X_test=None, y_test=None, 
+                         save=None, lr=0.01, ray_tune_exp=False, scheduler=torch.optim.lr_scheduler.ReduceLROnPlateau, batch_size=64):
+    
+    
+
+    tracemalloc.start()
+
+    # Code block to monitor memory usage    
+
+    
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
 
-    print(X_train)
     model.train()
     likelihood.train()
+    model.feature_extractor.joint_gp_training_phase=True
 
     # Use the adam optimizer
     optimizer = torch.optim.Adam([
@@ -139,110 +167,112 @@ def metatrain_DKL_wilson(model, X_train, y_train, likelihood,seed, training_iter
         {'params': model.covar_module.parameters()},
         {'params': model.mean_module.parameters()},
         {'params': model.likelihood.parameters()},
-    ], lr=0.01)
+    ], lr=lr)
 
     if freeze or warm_start_only:
-        # dont train NN
+        # Don't train NN
         optimizer = torch.optim.Adam([
-        {'params': model.covar_module.parameters()},
-        {'params': model.mean_module.parameters()},
-        {'params': model.likelihood.parameters()},
-    ], lr=0.01)
-
+            {'params': model.covar_module.parameters()},
+            {'params': model.mean_module.parameters()},
+            {'params': model.likelihood.parameters()},
+        ], lr=lr)
 
     # "Loss" for GPs - the marginal log likelihood
     mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
+    scheduler = scheduler(optimizer, mode='min', factor=0.1, patience=5, verbose=True)
 
-    logger.info('training in progress!!')
-    iterator = tqdm.tqdm(range(training_iterations))
-    for i in iterator:
-        # Zero backprop gradients
-        optimizer.zero_grad()
-        # Get output from model
-        output = model(X_train)
-        # Calc loss and backprop derivatives
-        loss = -mll(output, y_train)
-        
-        loss.backward()
-        iterator.set_postfix(loss=loss.item())
-        optimizer.step()
-    
-    return model,mll, likelihood
-
-
-
-def pretrain_neural_network_model_with_val(model, X_train, y_train, X_val, y_val, seed, num_epochs=100, batch_size=32, learning_rate=1e-3, patience=10, scheduler_factor=0.1, scheduler_patience=5):
-    # Ensure reproducibility
-    torch.manual_seed(seed)
-    random.seed(seed)
-    np.random.seed(seed)
-
-    
-    optimizer = torch.optim.Adam([{'params': model.parameters()}], lr=learning_rate)
-    criterion = nn.MSELoss()  # Mean Squared Error Loss for regression tasks
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=scheduler_factor, patience=scheduler_patience, verbose=True)
-
-    # Prepare DataLoader for training and validation sets
-    X_train = torch.tensor(X_train.values, dtype=torch.float32)
-    y_train = torch.tensor(y_train.values, dtype=torch.float32)
-    X_val = torch.tensor(X_val.values, dtype=torch.float32)
-    y_val = torch.tensor(y_val.values, dtype=torch.float32)
-    
     train_dataset = torch.utils.data.TensorDataset(X_train, y_train)
-    val_dataset = torch.utils.data.TensorDataset(X_val, y_val)
-    
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size, shuffle=True)
 
-    # Initialize variables for early stopping
-    best_val_loss = float('inf')
-    epochs_without_improvement = 0
-    best_model_state = None
+    val_dataset = torch.utils.data.TensorDataset(X_test, y_test)
+    val_dataloader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size, shuffle=True)
 
-    model.train()
+    logger.info('Training in progress!!')
+    iterator = tqdm.tqdm(range(training_iterations))
+    loss_values = []
+    test_loss_vals = []
 
-    for epoch in range(num_epochs):
-        # Training phase
-        model.train()
-        train_loss = 0
-        for batch_X, batch_y in train_loader:
-            optimizer.zero_grad()
-            outputs = model(batch_X)
-            loss = criterion(outputs.flatten(), batch_y)
-            loss.backward()
-            optimizer.step()
-            train_loss += loss.item()
-        
-        train_loss /= len(train_loader)
-        
-        # Validation phase
-        model.eval()
-        val_loss = 0
-        with torch.no_grad():
-            for batch_X_val, batch_y_val in val_loader:
-                val_outputs = model(batch_X_val)
-                val_loss += criterion(val_outputs.flatten(), batch_y_val).item()
-        
-        val_loss /= len(val_loader)
-        
-        print(f'Epoch [{epoch+1}/{num_epochs}], Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}')
-        
-        # Early stopping logic
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            best_model_state = model.state_dict()  # Save the best model
-            epochs_without_improvement = 0
-        else:
-            epochs_without_improvement += 1
-        
-        if epochs_without_improvement >= patience:
-            print(f"Early stopping at epoch {epoch+1}. Restoring best model from epoch {epoch+1-patience} with val loss of {best_val_loss}")
-            model.load_state_dict(best_model_state)  # Restore the best model
-            break
     
-    return model
+    for i in iterator:
+        train_loss=0.0
+        val_rmse=0.0
+        val_nnl=0.0
+        model.train()
+        likelihood.train()
+        for batch_X, batch_y in train_loader:
+        
+            # Zero backprop gradients
+            optimizer.zero_grad()
+            # Get output from model
+            output = model(X_train)
+            # Calculate loss and backprop derivatives
+            loss = -mll(output, y_train)
+            loss.backward()
+            iterator.set_postfix(loss=loss.item())
+            optimizer.step()
+            # Log the loss value
+            train_loss += loss.item()
+        train_loss /= len(train_loader)
+        loss_values.append(train_loss)
+        print('train_loss', train_loss)
+        # Evaluate on the test set if provided
+        if X_test is not None and y_test is not None:
+            model.eval()
+            likelihood.eval()
+            with torch.no_grad():
+                for X_val, y_val in val_dataloader:
+                    test_output = model(X_val)
+                # Use the predictive distribution to get the mean and variance
+                    pred_mean = test_output.mean
+                    pred_var = test_output.variance
+                # RMSE: Root Mean Squared Error
+                    rmse = torch.sqrt(torch.mean((pred_mean - y_val) ** 2)).item() 
+                # NLL: Negative Log Likelihood, sum or average over all test points
+                    nll = -likelihood.log_marginal(y_val, test_output).mean().item()  # Take the mean NLL
+                    val_rmse+=rmse
+                    val_nnl+=nll
+                
+                val_rmse = val_rmse / len(val_dataloader)
+                val_nll = val_nnl / len(val_dataloader)
+                #scheduler.step(val_nll) #
+                test_loss_vals.append(val_rmse)
+                #print(f'RMSE: {rmse}, NLL: {nll}')
+                print({'train_loss': train_loss, 'val_set_rmse': val_rmse, 'training_itr': i ,'negative_log_likelihood':val_nll})
+            # if ray_tune_exp:
+            #     train.report({'train_loss': train_loss, 'val_set_rmse': val_rmse, 'training_itr': i ,'negative_log_likelihood':val_nll})
 
-def pretrain_neural_network_model_with_sched(model, X_train, y_train, X_val, y_val, seed, num_epochs=100, batch_size=32, learning_rate=1e-3, patience=10, scheduler_factor=0.1, scheduler_patience=5):
+
+    current, peak = tracemalloc.get_traced_memory()
+    curr = round(current / (1024 ** 2) , 2)
+    p = round(peak / (1024 ** 2), 2)
+
+    print(f"Current memory usage: {curr} MB")
+    print(f"Peak memory usage: {p} MB")
+    
+    tracemalloc.stop()
+    train.report({'peak_mem':p, 'current_mem': curr,'train_loss': train_loss, 'val_set_rmse': val_rmse, 'training_itr': i ,'negative_log_likelihood':val_nll})
+
+    # Plot and save the training loss if specified
+    if save is not None:
+        plt.figure(figsize=(10, 6))
+        plt.plot(loss_values, label='Training Loss')
+        plt.plot(test_loss_vals, label='val')
+        plt.title('Training Loss over Iterations')
+        plt.xlabel('Iteration')
+        plt.ylabel('Loss')
+        plt.legend()
+        plt.grid()
+        plt.savefig('loss.png')
+        plt.close()
+
+    return model, mll, likelihood
+
+
+
+
+
+
+def pretrain_neural_network_model_with_sched(model, X_train, y_train, X_val, y_val, seed, num_epochs=100, batch_size=64, learning_rate=1e-3, patience=10, scheduler_factor=0.1, scheduler_patience=5):
     # Ensure reproducibility
     torch.manual_seed(seed)
     random.seed(seed)
@@ -255,10 +285,18 @@ def pretrain_neural_network_model_with_sched(model, X_train, y_train, X_val, y_v
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=scheduler_factor, patience=scheduler_patience, verbose=True)
 
     # Prepare DataLoader for training and validation sets
-    X_train = torch.tensor(X_train.values, dtype=torch.float32)
-    y_train = torch.tensor(y_train.values, dtype=torch.float32)
-    X_val = torch.tensor(X_val.values, dtype=torch.float32)
-    y_val = torch.tensor(y_val.values, dtype=torch.float32)
+    print(pd.DataFrame(data=X_train).describe())
+    # scaler_train = StandardScaler()
+    # X_train = scaler_train.fit_transform(X_train)
+    print(pd.DataFrame(data=y_train).describe())
+    X_train = torch.tensor(X_train, dtype=torch.float32)
+    y_train = torch.tensor(y_train, dtype=torch.float32)
+    print(pd.DataFrame(data=y_val).describe())
+    #X_val = scaler_train.transform(X_val)
+    X_val = torch.tensor(X_val, dtype=torch.float32)
+    y_val = torch.tensor(y_val, dtype=torch.float32)
+
+    
     
     train_dataset = torch.utils.data.TensorDataset(X_train, y_train)
     val_dataset = torch.utils.data.TensorDataset(X_val, y_val)
@@ -270,8 +308,6 @@ def pretrain_neural_network_model_with_sched(model, X_train, y_train, X_val, y_v
     best_val_loss = float('inf')
     epochs_without_improvement = 0
     best_model_state = None
-
-    model.train()
 
     for epoch in range(num_epochs):
         # Training phase
@@ -300,7 +336,7 @@ def pretrain_neural_network_model_with_sched(model, X_train, y_train, X_val, y_v
         print(f'Epoch [{epoch+1}/{num_epochs}], Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}')
 
         # Step the scheduler based on validation loss
-        scheduler.step(val_loss)
+        #scheduler.step(val_loss)
         
         # Early stopping logic
         if val_loss < best_val_loss:
@@ -314,133 +350,16 @@ def pretrain_neural_network_model_with_sched(model, X_train, y_train, X_val, y_v
             print(f"Early stopping at epoch {epoch+1}. Restoring best model from epoch {epoch+1-patience} with val loss of {best_val_loss}")
             model.load_state_dict(best_model_state)  # Restore the best model
             break
+    predictions = model(X_val).detach().cpu().numpy().flatten()
+    residuals = y_val.numpy() - predictions
+    plt.hist(residuals, bins=30)
+    plt.title("Residual Distribution")
+    plt.savefig('Residual Distribution.png')
     
     return model
 
-def pretrain_neural_network_model(model, X, y, seed, num_epochs=10, batch_size=32, learning_rate=1e-3):
-    # Ensure reproducibility
-    torch.manual_seed(seed)
-    random.seed(seed)
-    np.random.seed(seed)
-    optimizer = torch.optim.Adam([
-        {'params': model.parameters()},
-    ], lr=learning_rate)
-    
-    # Define the loss function and optimizer
-    criterion = nn.MSELoss()  # Mean Squared Error Loss for regression tasks    
-    # Create DataLoader for batching
-    print(X.shape, y.shape)
-    X = torch.tensor(X.values, dtype=torch.float32)  # Ensure the data type is float32 for features
-    y = torch.tensor(y.values, dtype=torch.float32)   
-    dataset = torch.utils.data.TensorDataset(X, y)
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
-    
-    # Training loop
-    model.train()  # Set model to training mode
 
 
-    for epoch in range(num_epochs):
-        epoch_loss = 0
-        for batch_X, batch_y in dataloader:
-            optimizer.zero_grad()  # Zero the gradients
-            
-            # Forward pass
-            outputs = model(batch_X)
-            # Compute loss
-            loss = criterion(outputs.flatten(), batch_y)
-            loss.backward()  # Backward pass
-            optimizer.step()  # Update weights
-            
-            epoch_loss += loss.item()
-        
-        # Print average loss for the epoch
-        print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss/len(dataloader):.4f}')
-    
-    return model
-
-def pretrain_neural_network_model_val(model, X, y, seed,num_epochs=50, batch_size=32, learning_rate=1e-3,  early_stopping_patience=5):
-    # Prepare for cross-validation
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    kf = KFold(n_splits=5, shuffle=True, random_state=42)
-    spearman_scores = []
-    cv_scores = []
-    
-    for fold, (train_idx, val_idx) in enumerate(kf.split(X)):
-        print(f"Fold {fold + 1}/{kf.get_n_splits()}")
-
-        # Split the data
-        X_train, X_val = X[train_idx], X[val_idx]
-        y_train, y_val = y[train_idx], y[val_idx]
-
-        # Create DataLoader
-        train_dataset = torch.utils.data.TensorDataset(torch.tensor(X_train, dtype=torch.float32), torch.tensor(y_train, dtype=torch.float32))
-        val_dataset = torch.utils.data.TensorDataset(torch.tensor(X_val, dtype=torch.float32), torch.tensor(y_val, dtype=torch.float32))
-
-        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-        val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
-
-        # Initialize the model, loss function, and optimizer
-        # input_dim = X.shape[1]
-        # output_dim = 1
-        #model = SimpleNN(input_dim, hidden_dim, output_dim)
-        criterion = nn.MSELoss()
-        optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-
-        # Early stopping variables
-        best_val_loss = float('inf')
-        patience_counter = 0
-
-        for epoch in range(num_epochs):
-            model.train()
-            running_loss = 0.0
-            
-            # Training phase
-            for inputs, targets in train_loader:
-                optimizer.zero_grad()
-                outputs = model(inputs)
-                loss = criterion(outputs.squeeze(), targets)
-                loss.backward()
-                optimizer.step()
-                running_loss += loss.item() * inputs.size(0)
-            
-            epoch_loss = running_loss / len(train_loader.dataset)
-
-            # Validation phase
-            model.eval()
-            val_predictions = []
-            val_targets = []
-            with torch.no_grad():
-                for inputs, targets in val_loader:
-                    outputs = model(inputs)
-                    val_predictions.append(outputs.squeeze().cpu().numpy())
-                    val_targets.append(targets.cpu().numpy())
-            
-            val_predictions = np.concatenate(val_predictions)
-            val_targets = np.concatenate(val_targets)
-            mse = mean_squared_error(val_targets, val_predictions)
-            spearman_corr, _ = spearmanr(val_targets, val_predictions)
-            
-            logger.info(f"Epoch {epoch + 1}/{num_epochs}, MSE: {mse:.4f}, Spearman Correlation: {spearman_corr:.4f}")
-            
-            # Early stopping check
-            if mse < best_val_loss:
-                best_val_loss = mse
-                patience_counter = 0
-            else:
-                patience_counter += 1
-            
-            if patience_counter >= early_stopping_patience:
-                logger.info("Early stopping triggered.")
-                break
-        
-        spearman_scores.append(spearman_corr)
-        cv_scores.append(mse)
-    print(str(spearman_scores))
-    print(str(mse))
-    model.eval()
-    return model
 
 def load_json_file(file_path):
     """
@@ -449,7 +368,7 @@ def load_json_file(file_path):
     with open(file_path, 'r') as f:
         return [json.loads(line) for line in f]
     
-def process_metadata(meta_data_dir_list, hyperparams_bounds, similarity_feature_list=[],current_env_config={}, time_attr='timesteps_total', metric='episode_reward_mean', best=False):
+def process_metadata(meta_data_dir_list, hyperparams_bounds, similarity_feature_list=[],current_env_config={}, time_attr='timesteps_total', metric='episode_reward_mean', best=False, partition_val=True):
     current_env_config.pop('env_name')
     hps_list = list(hyperparams_bounds.keys())
     df_list = []
@@ -503,14 +422,14 @@ def process_metadata(meta_data_dir_list, hyperparams_bounds, similarity_feature_
                     data = data[tr_colnames] #reordering cols
                     limits = get_limits(data[[time_attr, metric]], _hyperparam_bounds_flat)
                     
-                    X = normalize(data.drop(columns=['reward_changes','similiarity_feature']), limits)
+                    X = data.drop(columns=['reward_changes'])#normalize(data.drop(columns=['reward_changes','similiarity_feature']), limits)
                     # Add 'similiarity_feature' column back to X after the hyperparameters
-                    similarity_feature = data['similiarity_feature']
-                    X = pd.concat([X, similarity_feature], axis=1)
+                    #similarity_feature = standardize( data['similiarity_feature'])
+                    #X = pd.concat([X, similarity_feature], axis=1)
+                    #y = data['reward_changes'].values
                     y = standardize(data['reward_changes'].values).reshape(data['reward_changes'].size, 1)
                     y_df = pd.DataFrame(y, columns=['reward_changes'], index=X.index)
                     result = pd.concat([X, y_df], axis=1)
-                    print(result.shape)
                     df_list.append(result)
             len_each_run.append(len(df_list))
                     
@@ -524,7 +443,7 @@ def process_metadata(meta_data_dir_list, hyperparams_bounds, similarity_feature_
 
     # Subtract 1 from each index (to match Python indexing, which is 0-based)
     adjusted_indices = [i - 1 for i in len_each_run] # because i want to take 1 seed from every run!
-
+    
     # Extract the selected DataFrames into one list
     metdata_val_df_list = [df_list[i] for i in adjusted_indices]
     # Extract the remaining DataFrames into another list
@@ -538,20 +457,58 @@ def process_metadata(meta_data_dir_list, hyperparams_bounds, similarity_feature_
     y_train = metdata_train_df['reward_changes']
     x_val = metdata_val_df.drop(columns=['reward_changes'])
     y_val = metdata_val_df['reward_changes']
-    print(y_val.describe())
-    return x_train, y_train, x_val, y_val
+    scaler = StandardScaler()
+    #x_train['similiarity_feature'] =normalize(x_train['similiarity_feature'], [min(0, x_train['similiarity_feature'].min()), x_train['similiarity_feature'].max()]) # 0 because the test set will have a 0 sim to itself
+    #x_val['similiarity_feature'] = normalize(x_val['similiarity_feature'], [min(0, x_val['similiarity_feature'].min()), x_val['similiarity_feature'].max()])
+    #x_train[time_attr] = scaler.fit_transform(x_train[time_attr]) # 0 because the test set will have a 0 sim to itself
+    #x_val[time_attr] = scaler.transform(x_val[time_attr])
+    if partition_val:
+        return x_train, y_train, x_val, y_val
+    else:
+        # Combine training and validation sets
+        x_combined = pd.concat([x_train, x_val], ignore_index=True)
+        y_combined = pd.concat([y_train, y_val], ignore_index=True)
+        return x_combined, y_combined
 
 def get_default_context(env_name):
     env_name = env_name.lower()
     if 'cartpole' in env_name:
         return {'length': 0.5, 'tau':0.02, 'gravity':9.8}
+    elif 'mountaincar' in env_name:
+        return {'gravity': 0.0025}
+    elif 'bipedal' in env_name:
+        return {
+    "FPS": 50,
+    "SCALE": 30.0,
+    "GRAVITY_X": 0,
+    "GRAVITY_Y": -10,
+    "FRICTION": 2.5,
+    "TERRAIN_STEP": 14 / 30.0,
+    "TERRAIN_LENGTH": 200,
+    "TERRAIN_HEIGHT": 600 / 30 / 4,
+    "TERRAIN_GRASS": 10,
+    "TERRAIN_STARTPAD": 20,
+    "MOTORS_TORQUE": 80,
+    "SPEED_HIP": 4,
+    "SPEED_KNEE": 6,
+    "LIDAR_RANGE": 160 / 30.0,
+    "LEG_DOWN": -8 / 30.0,
+    "LEG_W": 8 / 30.0,
+    "LEG_H": 34 / 30.0,
+    "INITIAL_RANDOM": 5,
+    "VIEWPORT_W": 600,
+    "VIEWPORT_H": 400
+}
     else:
         raise NotImplementedError()
 if __name__ == "__main__":
-    process_metadata(#['/home/fr/fr_fr/fr_zs53/DKL/metaPBT-2.0/testing_dir/2024-09-12_20:56:29_PPO_length_0.05_pb2_Size4_CARLCartPole_timesteps_total/pb2_CARLCartPole_seed0_length_0.05'],
-                    [#'/home/fr/fr_fr/fr_zs53/DKL/metaPBT-2.0/testing_dir/2024-09-12_20:56:29_PPO_length_0.05_pb2_Size4_CARLCartPole_timesteps_total/pb2_CARLCartPole_seed0_length_0.05',
-                     '/pfs/work7/workspace/scratch/fr_zs53-dkl_exps/cluster_logs/pb2.gravity.c2/2024-09-15_18:52:35_PPO_gravity_1.9600000000000002_pb2_Size8_CARLCartPole_timesteps_total/pb2_CARLCartPole_seed0_gravity_1.9600000000000002'
-                     ],
+    from DKL.pretraining_dkl import GPRegressionModel_DKL, LargeFeatureExtractor
+    x_t, y_t, x_v, y_v = process_metadata(#['/home/fr/fr_fr/fr_zs53/DKL/metaPBT-2.0/testing_dir/2024-09-12_20:56:29_PPO_length_0.05_pb2_Size4_CARLCartPole_timesteps_total/pb2_CARLCartPole_seed0_length_0.05'],
+                    [
+                     '/pfs/work7/workspace/scratch/fr_zs53-dkl_exps/cluster_logs/2024-09-22_18:04.30_pb2_job_scripts.CARLBipedalWalker.TERRAIN_LENGTH.c16/CARLBipedalWalker_TERRAIN_LENGTH_320.0_pb2_Size_8_timesteps_total/seed9',
+                     '/pfs/work7/workspace/scratch/fr_zs53-dkl_exps/cluster_logs/2024-09-22_18:04.30_pb2_job_scripts.CARLBipedalWalker.TERRAIN_LENGTH.c17/CARLBipedalWalker_TERRAIN_LENGTH_340.0_pb2_Size_8_timesteps_total/seed9',
+                     '/pfs/work7/workspace/scratch/fr_zs53-dkl_exps/cluster_logs/2024-09-22_18:04.30_pb2_job_scripts.CARLBipedalWalker.TERRAIN_LENGTH.c20/CARLBipedalWalker_TERRAIN_LENGTH_400.0_pb2_Size_8_timesteps_total/seed4'
+                     ], #'/home/fr/fr_fr/fr_zs53/DKL/metaPBT-2.0/testing_dir/2024-09-12_20:56:29_PPO_length_0.05_pb2_Size4_CARLCartPole_timesteps_total/pb2_CARLCartPole_seed0_length_0.05',
                     {
                     #"lambda": [0.9, 1.0],
                     #"clip_param": [0.1, 0.5],
@@ -561,7 +518,33 @@ if __name__ == "__main__":
                     'num_sgd_iter': [3,30]
                     #'entropy_coeff' : [0.01, 0.5]
                 }
-                ,current_env_config= {'env_name':'CARLCartPole','length' :0.5})
+                ,current_env_config= {'env_name':'CARLBipedalWalker','TERRAIN_LENGTH' :320})
+    # x_test, y_test = process_metadata(#['/home/fr/fr_fr/fr_zs53/DKL/metaPBT-2.0/testing_dir/2024-09-12_20:56:29_PPO_length_0.05_pb2_Size4_CARLCartPole_timesteps_total/pb2_CARLCartPole_seed0_length_0.05'],
+    #                 ['/home/fr/fr_fr/fr_zs53/DKL/metaPBT-2.0/testing_dir/2024-09-12_20:56:29_PPO_length_0.05_pb2_Size4_CARLCartPole_timesteps_total/pb2_CARLCartPole_seed0_length_0.05'
+    #                  #'/pfs/work7/workspace/scratch/fr_zs53-dkl_exps/cluster_logs/pb2.gravity.c2/2024-09-15_18:52:35_PPO_gravity_1.9600000000000002_pb2_Size8_CARLCartPole_timesteps_total/pb2_CARLCartPole_seed0_gravity_1.9600000000000002'
+    #                  ],
+    #                 {
+    #                 #"lambda": [0.9, 1.0],
+    #                 #"clip_param": [0.1, 0.5],
+    #                 #'gamma': [0.9,0.99],
+    #                 "lr": [1e-5, 1e-3],
+    #                 #"train_batch_size": [1000, 10_000],
+    #                 'num_sgd_iter': [3,30]
+    #                 #'entropy_coeff' : [0.01, 0.5]
+    #             }
+    #             ,current_env_config= {'env_name':'CARLCartPole','length' :0.5}, partition_val=False)
+    
+
+    neuralnet =  LargeFeatureExtractor(data_dim=5, seed=0)
+    l1 = gpytorch.likelihoods.GaussianLikelihood()
+    train_x = torch.tensor(x_t.values, dtype=torch.float32)
+    train_y =torch.squeeze(torch.tensor(y_t.values, dtype=torch.float32))
+    gp_model = GPRegressionModel_DKL(train_x,train_y,l1, 0, neuralnet,append_sim_column=False)
+    test_x = torch.tensor(x_v.values, dtype=torch.float32)
+    test_y =torch.squeeze(torch.tensor(y_v.values, dtype=torch.float32))
+
+    metatrain_DKL_wilson(gp_model, train_x, train_y, l1, 0, save=True, X_test=test_x, y_test=test_y, training_iterations=100)
+    
 
 
 
