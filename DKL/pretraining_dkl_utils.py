@@ -184,8 +184,10 @@ def metatrain_DKL_wilson(model, X_train, y_train, likelihood, seed,
     train_dataset = torch.utils.data.TensorDataset(X_train, y_train)
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 
-    val_dataset = torch.utils.data.TensorDataset(X_test, y_test)
-    val_dataloader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size, shuffle=True)
+    if X_test is not None and y_test is not None:
+
+        val_dataset = torch.utils.data.TensorDataset(X_test, y_test)
+        val_dataloader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size, shuffle=True)
 
     logger.info('Training in progress!!')
     iterator = tqdm.tqdm(range(training_iterations))
@@ -199,19 +201,19 @@ def metatrain_DKL_wilson(model, X_train, y_train, likelihood, seed,
         val_nnl=0.0
         model.train()
         likelihood.train()
-        for batch_X, batch_y in train_loader:
+        #for batch_X, batch_y in train_loader:
         
             # Zero backprop gradients
-            optimizer.zero_grad()
-            # Get output from model
-            output = model(X_train)
-            # Calculate loss and backprop derivatives
-            loss = -mll(output, y_train)
-            loss.backward()
-            iterator.set_postfix(loss=loss.item())
-            optimizer.step()
-            # Log the loss value
-            train_loss += loss.item()
+        optimizer.zero_grad()
+        # Get output from model
+        output = model(X_train)
+        # Calculate loss and backprop derivatives
+        loss = -mll(output, y_train)
+        loss.backward()
+        iterator.set_postfix(loss=loss.item())
+        optimizer.step()
+        # Log the loss value
+        train_loss += loss.item()
         train_loss /= len(train_loader)
         loss_values.append(train_loss)
         print('train_loss', train_loss)
@@ -237,7 +239,10 @@ def metatrain_DKL_wilson(model, X_train, y_train, likelihood, seed,
                 #scheduler.step(val_nll) #
                 test_loss_vals.append(val_rmse)
                 #print(f'RMSE: {rmse}, NLL: {nll}')
-                print({'train_loss': train_loss, 'val_set_rmse': val_rmse, 'training_itr': i ,'negative_log_likelihood':val_nll})
+                if X_test is not None and y_test is not None:
+                    print({'train_loss': train_loss, 'val_set_rmse': val_rmse, 'training_itr': i ,'negative_log_likelihood':val_nll})
+
+
             # if ray_tune_exp:
             #     train.report({'train_loss': train_loss, 'val_set_rmse': val_rmse, 'training_itr': i ,'negative_log_likelihood':val_nll})
 
@@ -250,20 +255,20 @@ def metatrain_DKL_wilson(model, X_train, y_train, likelihood, seed,
     print(f"Peak memory usage: {p} MB")
     
     tracemalloc.stop()
-    train.report({'peak_mem':p, 'current_mem': curr,'train_loss': train_loss, 'val_set_rmse': val_rmse, 'training_itr': i ,'negative_log_likelihood':val_nll})
+    #train.report({'peak_mem':p, 'current_mem': curr,'train_loss': train_loss, 'val_set_rmse': val_rmse, 'training_itr': i ,'negative_log_likelihood':val_nll})
 
     # Plot and save the training loss if specified
-    if save is not None:
-        plt.figure(figsize=(10, 6))
-        plt.plot(loss_values, label='Training Loss')
-        plt.plot(test_loss_vals, label='val')
-        plt.title('Training Loss over Iterations')
-        plt.xlabel('Iteration')
-        plt.ylabel('Loss')
-        plt.legend()
-        plt.grid()
-        plt.savefig('loss.png')
-        plt.close()
+    # if save is not None:
+    #     plt.figure(figsize=(10, 6))
+    #     plt.plot(loss_values, label='Training Loss')
+    #     plt.plot(test_loss_vals, label='val')
+    #     plt.title('Training Loss over Iterations')
+    #     plt.xlabel('Iteration')
+    #     plt.ylabel('Loss')
+    #     plt.legend()
+    #     plt.grid()
+    #     plt.savefig('loss.png')
+    #     plt.close()
 
     return model, mll, likelihood
 

@@ -1,6 +1,7 @@
 import random
 
-from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import mean_squared_error, root_mean_squared_error
+from sklearn.preprocessing import MinMaxScaler, StandardScaler, Normalizer
 
 import ray
 from ray import train, tune
@@ -19,6 +20,7 @@ import GPy
 from DKL.pb2_utils import (
         
         TV_SquaredExp,
+        get_limits,
         
     )
 
@@ -180,6 +182,45 @@ architecture = [
 # Print the architecture of the dynamically created model
 #print(model)
 # pretrain the model ?
+
+
+def dynamic_exp(config):
+    train_dir_list = config['train_dir_list']
+    test_dir = config['test_dir']
+    print(test_dir)
+    seed = config['seed']
+    lr = config['lr']
+    test_env_config = extract_params_from_path(test_dir)
+    #x_train, y_train, x_val, y_val = process_metadata(meta_data_dir_list=train_dir_list, hyperparams_bounds=config['hyperparam_bounds'], current_env_config=deepcopy(test_env_config))
+    X, y =  process_metadata(meta_data_dir_list=train_dir_list, hyperparams_bounds=config['hyperparam_bounds'], current_env_config=deepcopy(test_env_config), partition_val=False)
+    x_test, y_test = process_metadata([test_dir], hyperparams_bounds=config['hyperparam_bounds'], current_env_config=deepcopy(test_env_config), partition_val=False)
+    # parttioton by t_perutb
+    x_test = x_test.values
+    y_test = y_test.values
+    t_perturb_simulation = 5
+    for i in range(t_perturb_simulation, len(x_test), t_perturb_simulation):
+        chunk_indices = range(i, min(i + t_perturb_simulation, len(x_test)))
+        Xraw = x_test[:i, :]
+        # Access the corresponding chunk from `other_array` using the same indices
+        yraw = y_test[:i]
+        x_test = x_test[i:, :]
+        y_test = y_test[i:]
+        rsme_meta_model = create_and_test_meta_model(Xraw, yraw, config, X, y, x_test, y_test)
+        rsme_baseline = create_and_test_baseline_model(Xraw, yraw, config, x_test, y_test)
+        
+        print('One interval done')
+        if rsme_baseline < rsme_meta_model:
+            print('rabena yestor')
+        else:
+            print('rabena satar')
+
+
+
+
+
+   
+
+
 def create_gp(config):
     train_dir_list = config['train_dir_list']
     test_dir = config['test_dir']
@@ -208,46 +249,91 @@ def create_gp(config):
     #     plt.title(f"Distribution of {col}")
     #     plt.legend()
     #     plt.savefig(f"Distribution of {col}.png")
-    scaler_train = StandardScaler()
+    scaler_train = MinMaxScaler(feature_range=(0, 1))
     x_train = scaler_train.fit_transform(x_train)
     x_val = scaler_train.transform(x_val)
-    #model_trained = pretrain_neural_network_model_with_sched(model=model, X_train=x_train.values,y_train=y_train.values, X_val=x_val.values,y_val= y_val.values ,seed=seed, num_epochs=num_epochs_nn)
+    model = pretrain_neural_network_model_with_sched(model=model, X_train=x_train,y_train=y_train, X_val=x_val,y_val= y_val ,seed=seed, num_epochs=num_epochs_nn)
     
-    # likelihood = gpytorch.likelihoods.GaussianLikelihood()
-    # # shouldnt you combine train and val here? for the gp?
+    likelihood = gpytorch.likelihoods.GaussianLikelihood()
+    # shouldnt you combine train and val here? for the gp?
     
-    # train_x_gp = torch.tensor(x_train, dtype=torch.float32)
-    # train_y_gp =torch.squeeze(torch.tensor(y_train, dtype=torch.float32))
-    # gp = GPRegressionModel_DKL(train_x_gp, train_y_gp,  likelihood, seed,model, False )
-    # val_x_gp = torch.tensor(x_val, dtype=torch.float32)
-    # val_y_gp =torch.squeeze(torch.tensor(y_val, dtype=torch.float32))   
-    # num_epochs_gp = config['num_epochs_gp']
+    train_x_gp = torch.tensor(x_train, dtype=torch.float32)
+    train_y_gp =torch.squeeze(torch.tensor(y_train, dtype=torch.float32))
+    gp = GPRegressionModel_DKL(train_x_gp, train_y_gp,  likelihood, seed,model, False )
+    val_x_gp = torch.tensor(x_val, dtype=torch.float32)
+    val_y_gp =torch.squeeze(torch.tensor(y_val, dtype=torch.float32))   
+    num_epochs_gp = config['num_epochs_gp']
 
-    # m_trained, mll_m ,l= metatrain_DKL_wilson(model=gp, X_train=train_x_gp, y_train=train_y_gp, X_test=val_x_gp, y_test=val_y_gp, likelihood=likelihood,seed=seed, ray_tune_exp=True, lr=lr, training_iterations=num_epochs_gp)
+    m_trained, mll_m ,l= metatrain_DKL_wilson(model=gp, X_train=train_x_gp, y_train=train_y_gp, X_test=val_x_gp, y_test=val_y_gp, likelihood=likelihood,seed=seed, ray_tune_exp=True, lr=lr, training_iterations=num_epochs_gp)
 
-    # # evaluation phase
+    # evaluation phase
 
-    # m_trained.eval()
-    # l.eval()
-    # with torch.no_grad(), gpytorch.settings.use_toeplitz(False), gpytorch.settings.fast_pred_var():
-    #     test_x_gp = torch.tensor(x_test.values, dtype=torch.float32)
-    #     test_y_gp =torch.squeeze(torch.tensor(y_test.values, dtype=torch.float32))
-    #     preds = m_trained(test_x_gp)
-    #     rsme_test = torch.sqrt(torch.mean((preds.mean - test_y_gp) ** 2)).item()
-    #     print('RSME TEST ', rsme_test)
-    # train.report({'rsme_test':rsme_test})
-    test_baseline_model(x_train, y_train,x_test,y_test )
+    m_trained.eval()
+    l.eval()
+    with torch.no_grad(), gpytorch.settings.use_toeplitz(False), gpytorch.settings.fast_pred_var():
+
+        x_test = scaler_train.transform(x_test)
+        test_x_gp = torch.tensor(x_test, dtype=torch.float32)
+        test_y_gp =torch.squeeze(torch.tensor(y_test, dtype=torch.float32))
+        preds = m_trained(test_x_gp)
+        rsme_test = torch.sqrt(torch.mean((preds.mean - test_y_gp) ** 2)).item()
+        print('RSME TEST ', rsme_test)
+    train.report({'rsme_test':rsme_test})
+    #test_baseline_model(x_train, y_train,x_test,y_test )
 
 
 
 
-def test_baseline_model(x_test, y_test, config):
+def create_and_test_meta_model(Xraw, yraw, config, meta_x, meta_y, x_test, y_test):
+    hp_bounds = config['hyperparam_bounds']
+    
+    bounds = flatten_dict(
+            hp_bounds, prevent_delimiter=True
+        )    
+    neural_network = create_nn_model(config)
+    seed = 0
+    sim_feature = 0.0
 
-    num_f = 3
-    hp_bounds = config['hyperparameter_bounds']
+    
 
-    hps_list = list(hp_bounds.keys())
-    df_list = []
+    X_train = np.concatenate([meta_x.values, Xraw], axis=0)
+    base_vals = np.array(list(bounds.values())).T
+    oldpoints = X_train[:, :3 ]
+
+    limits = get_limits(oldpoints, bounds)
+    X = normalize(X_train, limits)
+    scaler = StandardScaler()
+    y = scaler.fit_transform(yraw.reshape(-1, 1)).reshape(yraw.shape[0],-1)
+    y = np.concatenate([meta_y.values, y.flatten()], axis=0)
+
+    likelihood = gpytorch.likelihoods.GaussianLikelihood()
+
+    train_x = torch.tensor(X, dtype=torch.float32)
+    train_y =torch.squeeze(torch.tensor(y, dtype=torch.float32))
+    m = GPRegressionModel_DKL(train_x, train_y, feature_extractor=neural_network, likelihood=likelihood,seed=seed)
+    m_trained, mll_m ,l= metatrain_DKL_wilson(model=m, X_train=train_x, y_train=train_y, likelihood=likelihood,seed=seed,training_iterations=4)
+
+    x_test = normalize(x_test, limits)
+    y_test = scaler.transform(y_test.reshape(-1, 1))
+    m_trained.eval()
+    l.eval()
+    x = torch.tensor(x_test, dtype=torch.float32)
+    with torch.no_grad(), gpytorch.settings.use_toeplitz(False), gpytorch.settings.fast_pred_var():
+        preds = m_trained(x)
+    rmse = torch.sqrt(torch.mean((preds.mean - y_test)**2))
+    print('RSME META MODEL: {}'.format(rmse.item())) 
+    return rmse
+
+
+def create_and_test_baseline_model(Xraw, yraw, config, x_test, y_test):
+    
+
+    num_f = 2
+    Xraw = np.delete(Xraw, 2, axis=1)
+    x_test = np.delete(x_test, 2, axis=1) # removing similariyt featurws
+
+    hp_bounds = config['hyperparam_bounds']
+    
     bounds = flatten_dict(
             hp_bounds, prevent_delimiter=True
         )
@@ -262,25 +348,43 @@ def test_baseline_model(x_test, y_test, config):
     old_lims = np.concatenate(
         (np.max(oldpoints, axis=0), np.min(oldpoints, axis=0))
     ).reshape(2, oldpoints.shape[1])
-
     limits = np.concatenate((old_lims, base_vals), axis=1)
 
     X = normalize(Xraw, limits)
-    y = standardize(yraw).reshape(yraw.size, 1)
+    scaler = StandardScaler()
 
-    print(y_train.shape)
+    y = scaler.fit_transform(yraw.reshape(-1, 1) )
 
     kernel = TV_SquaredExp(
-        input_dim=x_train.shape[1], variance=1.0, lengthscale=1.0, epsilon=0.1
+        input_dim=X.shape[1], variance=1.0, lengthscale=1.0, epsilon=0.1
     )
-    m = GPy.models.GPRegression(x_train, y_train, kernel)
-    m.optimize()
-    m.kern.lengthscale.fix(m.kern.lengthscale.clip(1e-5, 1))
-    y_pred_mean, y_pred_var = m.predict(x_test)
-    plot(x_train, y_train, x_test, y_pred_mean,  y_pred_var)
 
-    rmse = np.sqrt(np.mean((y_pred_mean - y_test) ** 2))
-    print(f"Root Mean Squared Error (RMSE)of BASELINE: {rmse:.4f}")
+    try:
+        m = GPy.models.GPRegression(X, y, kernel)
+    except np.linalg.LinAlgError:
+        # add diagonal ** we would ideally make this something more robust...
+        X += np.eye(X.shape[0]) * 1e-3
+        m = GPy.models.GPRegression(X, y, kernel)
+
+    try:
+        m.optimize()
+    except np.linalg.LinAlgError:
+        # add diagonal ** we would ideally make this something more robust...
+        X += np.eye(X.shape[0]) * 1e-3
+        m = GPy.models.GPRegression(X, y, kernel)
+        m.optimize()
+
+    m.kern.lengthscale.fix(m.kern.lengthscale.clip(1e-5, 1))
+    x_test = normalize(x_test, limits)
+    preds, pred_vars = m.predict(x_test)
+    
+
+    # Step 3: Calculate RMSE
+    y_test = scaler.transform(y_test.reshape(-1, 1))
+
+    rmse = np.sqrt(root_mean_squared_error(y_test, preds))
+    print(f"RMSE BASELINE: {rmse}")
+    return rmse 
 
     
 
@@ -439,7 +543,7 @@ sampled_config = {
 }
 
 
-create_gp(config=sampled_config)
+dynamic_exp(config=sampled_config)
 #ray.init()  
 #tune.run(create_gp, config=search_space, num_samples=1, name='arewelearning', storage_path=args.ws_dir)
 

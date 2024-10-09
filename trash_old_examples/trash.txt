@@ -1,0 +1,96 @@
+# the whole trick is here.
+def _select_config(
+    self,
+    Xraw: np.array,
+    yraw: np.array,
+    current: list,
+    newpoint: np.array,
+
+) -> np.ndarray:
+    """Selects the next hyperparameter config to try.
+
+    This function takes the formatted data, fits the GP model and optimizes the
+    UCB acquisition function to select the next point.
+
+    Args:
+        Xraw: The un-normalized array of hyperparams, Time and
+            Reward - reward is for example the reward of an rl agent
+        yraw: The un-normalized vector of reward changes.
+        current: The hyperparams of trials currently running. This is
+            important so we do not select the same config twice. If there is
+            data here then we fit a second GP including it
+            (with fake y labels). The GP variance doesn't depend on the y
+            labels so it is ok.
+        newpoint: The Reward and Time for the new point.
+            We cannot change these as they are based on the *new weights*.
+        bounds: Bounds for the hyperparameters. Used to normalize.
+        num_f: The number of fixed params. Almost always 2 (reward+time)
+
+    Return:
+        xt: A vector of new hyperparameters.
+    """
+    # for DKL
+
+    neural_network = self.neural_network
+    seed = self.seed 
+
+    bounds = self._hyperparam_bounds_flat
+    
+    # append to Xraw similarity column
+    Xraw_ = np.hstack([Xraw, np.full((Xraw.shape[0], 1), self.sim_feature)])
+    # add meta data to our current trail data
+    X_train = np.concatenate([self.metadata_train_x.values, Xraw_], axis=1)
+    # scale for neural net
+    X_train_scaled = scaler.fit_transform(X_train)
+    # important to standardise rewards, each in its own env - the meta is already standardised
+    y = standardize(yraw).reshape(yraw.size, 1)
+    y_train = np.concatenate([self.metadata_train_y.values, y], axis=1)
+    
+    # fixed = normalize(newpoint, oldpoints)
+    logger.info('about to go train')
+
+
+    likelihood = gpytorch.likelihoods.GaussianLikelihood()
+
+    train_x = torch.tensor(X_train_scaled, dtype=torch.float32)
+    train_y =torch.squeeze(torch.tensor(y_train, dtype=torch.float32))
+    
+    m = self.deep_kernel_model(train_x, train_y, feature_extractor=neural_network, likelihood=likelihood,seed=seed)
+    m_trained, mll_m ,l= metatrain_DKL_wilson(model=m, X_train=train_x, y_train=train_y, likelihood=likelihood,seed=seed)
+    
+
+    # if there are current runs you must freeze the neural network heart in order 
+    # not to corrupt it with the fake values
+    if current is None:
+        m1_trained = deepcopy(m)
+        l1 = deepcopy(l)
+    else:
+        # add the current trials to the dataset
+        logger.info('training new gp')
+        newpoint= newpoint.astype(np.float32)
+        padding = np.array([newpoint for _ in range(current.shape[0])])
+        current = np.hstack((padding, newpoint))
+        current_ =np.hstack([current, np.full((current.shape[0], 1), self.sim_feature)])
+        Xnew = np.vstack((X_train, current_))
+        # fake labels bc we dont depend on y for variance calculation
+        ypad = np.zeros(current.shape[0])
+        ypad = ypad.reshape(-1, 1)
+        ynew = np.vstack((y_train, ypad))
+        scaler_new = MinMaxScaler(feature_range=(0, 1))
+        Xnew_scaled = scaler_new.fit_transform(Xnew)
+        train_xnew = torch.tensor(Xnew_scaled, dtype=torch.float32)
+        train_ynew = torch.squeeze(torch.tensor(ynew, dtype=torch.float32))
+        likelihood = gpytorch.likelihoods.GaussianLikelihood()
+        m1 = self.deep_kernel_model(train_xnew, train_ynew, feature_extractor=neural_network, likelihood=likelihood,seed=seed)
+        m1_trained, mll_m1,l1 = metatrain_DKL_wilson(model=m1, X_train=train_xnew, y_train=train_ynew, likelihood=likelihood, freeze=True,seed=seed)
+
+    #xt = minimise_wrt_acq()
+    xt = optimize_acq_DKL(UCB_DKL, m_trained, m1_trained,l,l1, fixed, num_f,seed)
+
+    # convert back...denormalise
+    xt = xt * (np.max(base_vals, axis=0) - np.min(base_vals, axis=0)) + np.min(
+        base_vals, axis=0
+    )
+
+    xt = xt.astype(np.float32)
+    return xt

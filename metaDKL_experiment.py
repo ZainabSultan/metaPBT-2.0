@@ -15,13 +15,9 @@ import numpy as np
 import pandas as pd
 from ray.tune.registry import register_env
 import torch
-from DKL.pretraining_dkl import PB2_dkl_pretrained
-from ray.tune import run, sample_from
-from ray.tune.schedulers import PopulationBasedTraining
-from ray.tune.schedulers.pb2 import PB2
-from ray.rllib.algorithms import ppo
+from DKL.Meta_DKL import Meta_DKL
+
 from copy import deepcopy
-from CARL_env_reg_wrapper import CARLWrapper
 
 
 def dict_to_path_string(params):
@@ -51,15 +47,19 @@ def env_creator(env_config):
     print(env_config)
     env_name = env_config.pop('env_name')
     if env_name == 'CARLCartPole':
-        from CARL_env_reg_wrapper_copy import CARLCartPoleWrapper as env
+        from CARLWrapper import CARLCartPoleWrapper as env
     elif env_name == 'CARLMountainCar':
-        from CARL_env_reg_wrapper_copy import CARLMountainCarWrapper as env
+        from CARLWrapper import CARLMountainCarWrapper as env
     elif env_name == 'CARLMountainCarCont':
-        from CARL_env_reg_wrapper_copy import CARLMountainCarContWrapper as env
+        from CARLWrapper import CARLMountainCarContWrapper as env
     elif env_name == 'CARLAcrobot':
-        from CARL_env_reg_wrapper_copy import CARLAcrobotWrapper as env
+        from CARLWrapper import CARLAcrobotWrapper as env
     elif env_name == 'CARLPendulum':
-        from CARL_env_reg_wrapper_copy import CARLPendulumWrapper as env
+        from CARLWrapper import CARLPendulumWrapper as env
+    elif env_name == 'CARLLunarLander':
+        from CARLWrapper import CARLLunarLanderWrapper as env
+    elif env_name == 'CARLBipedalWalker':
+        from CARLWrapper import CARLBipedalWalkerWrapper as env
     else:
         raise NotImplementedError
     return env(contexts={0:env_config})
@@ -89,7 +89,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_samples", type=int, default=4)
     parser.add_argument("--t_ready", type=int, default=500_00)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--context", type=str, default='{"gravity":1.0}')
+    parser.add_argument("--context", type=str, default='{"TERRAIN_STEP":0.8}')
     parser.add_argument(
         "--horizon", type=int, default=1600
     )  # make this 1000 for other envs
@@ -142,7 +142,7 @@ if __name__ == "__main__":
 
         meta_data_dir_list = args.metadata_dir_list
         print(meta_data_dir_list)
-        pb2_metadkl=PB2_dkl_pretrained(
+        pb2_metadkl=Meta_DKL(
             time_attr=args.criteria,
             #metric=args.metric,
             #mode="max",

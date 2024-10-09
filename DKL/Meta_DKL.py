@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Callable, Dict, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from torch import nn
 from ray.tune import TuneError
 from ray.tune.experiment import Trial
@@ -12,13 +13,13 @@ from ray.tune.schedulers.pbt import _PBTTrialState
 from ray.tune.utils.util import flatten_dict, unflatten_dict
 from ray.util.debug import log_once
 #from DKL.PB2_DKL_utils import train_DKL_wilson, UCB_DKL,optimize_acq_DKL
-from DKL.pretraining_dkl_utils import metatrain_DKL_wilson, UCB_DKL,optimize_acq_DKL, process_metadata, pretrain_neural_network_model_with_sched
+from DKL.Meta_DKL_data_utils import process_pb2_runs_metadata, standardize, normalize
+from DKL.Meta_DKL_train_utils import metatrain_DKL_wilson, UCB_DKL, optimize_acq_DKL, DynamicNN, GPRegressionModel_DKL
 import math
 import torch
 import gpytorch
 import random
 logging.getLogger().setLevel(logging.INFO)
-
 if TYPE_CHECKING:
     from ray.tune.execution.tune_controller import TuneController
 
@@ -38,15 +39,7 @@ def import_pb2_dependencies():
 GPy, has_sklearn = import_pb2_dependencies()
 
 if GPy and has_sklearn:
-    from ray.tune.schedulers.pb2_utils import (
-        UCB,
-        TV_SquaredExp,
-        normalize,
-        optimize_acq,
-        select_length,
-        standardize,
-        
-    )
+
     from DKL.pb2_utils import get_limits
 
 logger = logging.getLogger(__name__)
@@ -56,52 +49,7 @@ import torch.nn as nn
 import random
 import numpy as np
 
-class LargeFeatureExtractor(nn.Module):
-    def __init__(self, data_dim, seed, joint_gp_training_phase=False):
-        super(LargeFeatureExtractor, self).__init__()
-        self.seed = seed
-        random.seed(self.seed)
-        np.random.seed(self.seed)
-        torch.manual_seed(self.seed)
-        self.joint_gp_training_phase=joint_gp_training_phase
-        
-        # Define the layers
-        self.linear1 = nn.Linear(data_dim, 1000)
-        self.relu1 = nn.ReLU()
-        self.linear2 = nn.Linear(1000, 500)
-        self.relu2 = nn.ReLU()
-        self.linear3 = nn.Linear(500, 50)
-        self.relu3 = nn.ReLU()
-        self.linear4 = nn.Linear(50, 2)  # Output size of 2 for feature extraction
-        
-        # Additional layers for forward pass beyond extract
-        self.final_linear = nn.Linear(50, 1)  # Final output layer (1 output)
 
-    def extract(self, x):
-        # Process data through the network up to `linear4`
-        x = self.linear1(x)
-        x = self.relu1(x)
-        x = self.linear2(x)
-        x = self.relu2(x)
-        x = self.linear3(x)
-        x = self.relu3(x)
-        x = self.linear4(x)  # Up to this point (output is of size 2)
-        return x
-
-    def forward(self, x):
-        # Complete forward pass through all layers
-        x = self.linear1(x)
-        x = self.relu1(x)
-        x = self.linear2(x)
-        x = self.relu2(x)
-        x = self.linear3(x)
-        x = self.relu3(x)
-        if not self.joint_gp_training_phase:
-            x = self.final_linear(x)  # Output size 1
-        else:
-            x = self.linear4(x)
-            
-        return x
 
 
 
@@ -139,61 +87,13 @@ def _fill_config(
     return filled_hyperparams
 
 
-class GPRegressionModel_DKL(gpytorch.models.ExactGP):
 
-        
-
-        def __init__(self, train_x, train_y, likelihood, seed,feature_extractor : LargeFeatureExtractor, append_sim_column=True):
-            
-            self.seed=seed
-            random.seed(self.seed)
-            np.random.seed(self.seed)
-            torch.manual_seed(self.seed)
-            super(GPRegressionModel_DKL, self).__init__(train_x, train_y, likelihood)
-            self.mean_module = gpytorch.means.ConstantMean()
-            self.covar_module = gpytorch.kernels.GridInterpolationKernel( # this is to approx kernel
-                #gpytorch.kernels.ScaleKernel(gpytorch.kernels.spectral_mixture_kernel(num_mixtures=4)),
-                gpytorch.kernels.SpectralMixtureKernel(num_mixtures=4, ard_num_dims=2), # bc SM shouldnt be combined with scale kernels
-                # TODO set batch size??
-                num_dims=2, grid_size=100
-            )
-            
-            self.feature_extractor = feature_extractor
-            self.X = train_x
-            self.append_sim_column=append_sim_column 
-
-            # This module will scale the NN features so that they're nice values
-            self.scale_to_bounds = gpytorch.utils.grid.ScaleToBounds(0, 1.)
-            # was -1 but changed to match the other parts  
-
-        def forward(self, x):
-            random.seed(self.seed)
-            np.random.seed(self.seed)
-            torch.manual_seed(self.seed)
-            # # We're first putting our data through a deep net (feature extractor)
-            # zeros_column = torch.zeros(x.shape[0], 1)
-            # # Concatenate the zeros column to the original tensor
-            # if self.append_sim_column:
-            #     train_x = torch.cat((x, zeros_column), dim=1)
-            # else:
-            #     train_x=x
-            self.feature_extractor.joint_gp_training_phase = True
-            projected_x = self.feature_extractor(x)
-            projected_x = self.scale_to_bounds(projected_x)  # Make the NN values "nice"
-
-            mean_x = self.mean_module(projected_x)
-            covar_x = self.covar_module(projected_x)
-            return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
-
-
-# the whole trick is here.
 def _select_config(
     self,
     Xraw: np.array,
     yraw: np.array,
     current: list,
     newpoint: np.array,
-    num_f: int,
 
 ) -> np.ndarray:
     """Selects the next hyperparameter config to try.
@@ -222,49 +122,54 @@ def _select_config(
     bounds = self._hyperparam_bounds_flat
     neural_network = self.neural_network
     seed = self.seed
+    if np.isscalar(self.sim_feature):
+        # If sim_feature is a scalar, reshape it to be a single column
+        sim_feature_col = np.full((Xraw.shape[0], 1), self.sim_feature)
+    else:
+        # If sim_feature is an array, create multiple columns (one per element in the array)
+        sim_feature_col = np.tile(self.sim_feature, (Xraw.shape[0], 1))
 
-    oldpoints = Xraw[:, :num_f]
+    # Insert sim_feature as the third column (after the first two columns of Xraw)
+    
+    Xraw_ = np.hstack([Xraw[:, :2], sim_feature_col, Xraw[:, 2:]])
+    print(Xraw.shape, Xraw_.shape, self.metadata_train_x.values.shape)
+    # oldpoints = Xraw[:, :self.num_fixed_params ]
     #
     # limits = get_limits(oldpoints, bounds)    
 
-    length = select_length(Xraw, yraw, bounds, num_f)
+    # length = select_length(Xraw, yraw, bounds, num_f)
 
-    Xraw = Xraw[-length:, :]
-    yraw = yraw[-length:]
+    # Xraw = Xraw[-length:, :]
+    # yraw = yraw[-length:]
 
+    X_train = np.concatenate([self.metadata_train_x.values, Xraw_], axis=0)
     base_vals = np.array(list(bounds.values())).T
-    oldpoints = Xraw[:, :num_f]
-    print(oldpoints)
+    oldpoints = X_train[:, :self.num_fixed_params ]
     # old_lims = np.concatenate(
     #     (np.max(oldpoints, axis=0), np.min(oldpoints, axis=0))
     # ).reshape(2, oldpoints.shape[1])
     # limits = np.concatenate((old_lims, base_vals), axis=1)
     limits = get_limits(oldpoints, bounds)
-    X = normalize(Xraw, limits)
-    y = standardize(yraw).reshape(yraw.size, 1)
-    fixed = normalize(newpoint, oldpoints)
+    X = normalize(X_train, limits)
+    y = standardize(yraw)
+    y = np.concatenate([self.metadata_train_y.values, y], axis=0)
+    newpoint_ = np.hstack([newpoint[:2], self.sim_feature, newpoint[ 2:]])
+    print(newpoint_, oldpoints.shape)
+    fixed = normalize(newpoint_, oldpoints)
+    
     logger.info('about to go train')
-
-
     likelihood = gpytorch.likelihoods.GaussianLikelihood()
 
     train_x = torch.tensor(X, dtype=torch.float32)
     train_y =torch.squeeze(torch.tensor(y, dtype=torch.float32))
-
-    # augement training data with similarity feature
-    # all 0s because this is the base task
-    #zeros_column = torch.zeros(train_x.shape[0], 1)
-    # Concatenate the zeros column to the original tensor
-    #train_x = torch.cat((train_x, zeros_column), dim=1)
+    print(X.shape, y.shape)
     
-    m = GPRegressionModel_DKL(train_x, train_y, feature_extractor=neural_network, likelihood=likelihood,seed=seed)
+    m = self.deep_kernel_gaussian_model(train_x, train_y, feature_extractor=neural_network, likelihood=likelihood,seed=seed)
     m_trained, mll_m ,l= metatrain_DKL_wilson(model=m, X_train=train_x, y_train=train_y, likelihood=likelihood,seed=seed)
-    
-
     # if there are current runs you must freeze the neural network heart in order 
     # not to corrupt it with the fake values
     if current is None:
-        m1_trained = deepcopy(m)
+        m1_trained = deepcopy(m_trained)
         l1 = deepcopy(l)
     else:
         # add the current trials to the dataset
@@ -273,7 +178,6 @@ def _select_config(
         padding = np.array([fixed for _ in range(current.shape[0])])
         current = normalize(current, base_vals)
         current = np.hstack((padding, current))
-
         Xnew = np.vstack((X, current))
         # fake labels bc we dont depend on y for variance calculation
         ypad = np.zeros(current.shape[0])
@@ -283,11 +187,11 @@ def _select_config(
         train_xnew = torch.tensor(Xnew, dtype=torch.float32)
         train_ynew = torch.squeeze(torch.tensor(ynew, dtype=torch.float32))
         likelihood = gpytorch.likelihoods.GaussianLikelihood()
-        m1 = GPRegressionModel_DKL(train_xnew, train_ynew, feature_extractor=neural_network, likelihood=likelihood,seed=seed)
+        m1 = self.deep_kernel_gaussian_model(train_xnew, train_ynew, feature_extractor=neural_network, likelihood=likelihood,seed=seed)
         m1_trained, mll_m1,l1 = metatrain_DKL_wilson(model=m1, X_train=train_xnew, y_train=train_ynew, likelihood=likelihood, freeze=True,seed=seed)
 
     #xt = minimise_wrt_acq()
-    xt = optimize_acq_DKL(UCB_DKL, m_trained, m1_trained,l,l1, fixed, num_f,seed)
+    xt = optimize_acq_DKL(UCB_DKL, m_trained, m1_trained,l,l1, fixed, self.num_fixed_params ,seed)
 
     # convert back...denormalise
     xt = xt * (np.max(base_vals, axis=0) - np.min(base_vals, axis=0)) + np.min(
@@ -296,6 +200,7 @@ def _select_config(
 
     xt = xt.astype(np.float32)
     return xt
+
 
 
 def _explore(
@@ -315,8 +220,7 @@ def _explore(
     data = self.data
     bounds = self._hyperparam_bounds_flat
     current = self.current
-    neural_network = self.neural_network
-    seed=self.seed
+
 
     df = data.sort_values(by="Time").reset_index(drop=True)
 
@@ -350,7 +254,7 @@ def _explore(
         hparams = df[bounds.keys()]
         X = pd.concat([t_r, hparams], axis=1).values
         newpoint = df[df["Trial"] == str(base)].iloc[-1, :][["Time", "R_before"]].values
-        new = _select_config(self, X, y, current, newpoint, num_f=len(t_r.columns))
+        new = _select_config(self, X, y, current, newpoint)
 
         new_config = config.copy()
         values = []
@@ -381,7 +285,7 @@ def _explore(
 
 
 
-class PB2_dkl_pretrained(PopulationBasedTraining):
+class Meta_DKL(PopulationBasedTraining):
 
     def __init__(
         self,
@@ -395,16 +299,26 @@ class PB2_dkl_pretrained(PopulationBasedTraining):
         require_attrs: bool = True,
         synch: bool = False,
         custom_explore_fn: Optional[Callable[[dict], dict]] = None,
-        neural_network: LargeFeatureExtractor = None,
         seed:int =None,
         meta_data_dir_list: list=None,
         current_env_config: dict =None,
         num_extra_info_dims: int = 1,
-        warmstart_only: bool = False
+        warmstart_only: bool = False,
+        sim_feature: float = 0.0,
+        type_meta_runs: str = 'pb2',
+        deep_kernel_gaussian_model = GPRegressionModel_DKL,
+        pretrain_neural_net: bool = True,
+        neural_net_archi: list = [
+        {'type': 'linear', 'out_dim': 1000},
+        {'type': 'relu'},
+        {'type': 'linear', 'out_dim': 500},
+        {'type': 'relu'},
+        {'type': 'linear', 'out_dim': 50},
+        {'type': 'relu'},
+        {'type': 'linear', 'out_dim': 2}  # Feature extraction output size
+    ]
         
-        
-        #num_inputs: int = 2 
-    ):
+            ):
 
         gpy_available, sklearn_available = import_pb2_dependencies()
         if not gpy_available:
@@ -426,7 +340,7 @@ class PB2_dkl_pretrained(PopulationBasedTraining):
             )
 
 
-        super(PB2_dkl_pretrained, self).__init__(
+        super(Meta_DKL, self).__init__(
             time_attr=time_attr,
             metric=metric,
             mode=mode,
@@ -443,7 +357,8 @@ class PB2_dkl_pretrained(PopulationBasedTraining):
 
         self.last_exploration_time = 0  # when we last explored
         self.data = pd.DataFrame()
-        self.neural_network = neural_network
+        self.pretrain_neural_net = pretrain_neural_net
+        self.neural_net_archi= neural_net_archi
         self.seed=seed
         self.meta_data_dir_list=meta_data_dir_list
         self.current_env_config = current_env_config
@@ -451,23 +366,33 @@ class PB2_dkl_pretrained(PopulationBasedTraining):
         self._hyperparam_bounds_flat = flatten_dict(
             hyperparam_bounds, prevent_delimiter=True
         )
+        self.sim_feature = sim_feature
         self.warmstart_only = warmstart_only
         self._validate_hyperparam_bounds(self._hyperparam_bounds_flat)
+        self.deep_kernel_gaussian_model = deep_kernel_gaussian_model
 
         # Current = trials running that have already re-started after reaching
         #           the checkpoint. When exploring we care if these trials
         #           are already in or scheduled to be in the next round.
         self.current = None
+        self.num_fixed_params = 2 + num_extra_info_dims # 2 = time and reward
 
-        if self.neural_network is None:
-            # 2 is time and reward, 
-            # num extra info is whatever additional descriptors (such as similiraity features)
-            num_inputs = num_extra_info_dims + 2 + len(hyperparam_bounds) # time, reward, ,sim feat and num of HPs
-            self.neural_network = LargeFeatureExtractor(data_dim=num_inputs, seed=seed) 
+        num_inputs = self.num_fixed_params + len(hyperparam_bounds) # time, reward, ,sim feat and num of HPs
+        self.neural_network = DynamicNN(self.neural_net_archi,input_dim=num_inputs, seed=seed) 
 
-        x_train, y_train, x_val, y_val = process_metadata(self.meta_data_dir_list, self._hyperparam_bounds, current_env_config=self.current_env_config)
+        if type_meta_runs == 'pb2':
 
-        self.neural_network = pretrain_neural_network_model_with_sched(model=self.neural_network, X_train=x_train,y_train=y_train, X_val=x_val,y_val= y_val ,seed=seed, num_epochs=100)
+            x_train, y_train, x_val, y_val = process_pb2_runs_metadata(self.meta_data_dir_list, self._hyperparam_bounds, current_env_config=self.current_env_config)
+        else:
+            ...
+
+        self.metadata_train_x = x_train
+        self.metadata_train_y = y_train
+        self.metadata_val_x = x_val
+        self.metadata_val_y = y_val
+        
+        # if self.pretrain_neural_net:
+        #     self.neural_network = pretrain_neural_network_model(model=self.neural_network, X_train=x_train,y_train=y_train, X_val=x_val,y_val= y_val ,seed=seed, num_epochs=100)
 
     def on_trial_add(self, tune_controller: "TuneController", trial: Trial):
         filled_hyperparams = _fill_config(trial.config, self._hyperparam_bounds,self.seed)
@@ -498,7 +423,7 @@ class PB2_dkl_pretrained(PopulationBasedTraining):
     def _save_trial_state(
         self, state: _PBTTrialState, time: int, result: Dict, trial: Trial
     ):
-        score = super(PB2_dkl_pretrained, self)._save_trial_state(state, time, result, trial)
+        score = super(Meta_DKL, self)._save_trial_state(state, time, result, trial)
 
         # Data logging for PB2.
 

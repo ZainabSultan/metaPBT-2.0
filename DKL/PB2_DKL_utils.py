@@ -134,45 +134,7 @@ def optimize_acq_DKL(func, m, m1,l,l1, fixed, num_f, seed):
     return np.clip(best_theta, 0, 1)
 
 
-def UCB_DKL(m, m1,l,l1, x, fixed, kappa=None):
-    """UCB acquisition function. Interesting points to note:
-    1) We concat with the fixed points, because we are not optimizing wrt
-       these. This is the Reward and Time, which we can't change. We want
-       to find the best hyperparameters *given* the reward and time.
-    2) We use m to get the mean and m1 to get the variance. If we already
-       have trials running, then m1 contains this information. This reduces
-       the variance at points currently running, even if we don't have
-       their label.
-       Ref: https://jmlr.org/papers/volume15/desautels14a/desautels14a.pdf
 
-    """
-
-    c1 = 0.2
-    c2 = 0.4
-    beta_t = c1 + max(0, np.log(c2 * m.X.shape[0]))
-    kappa = np.sqrt(beta_t) if kappa is None else kappa
-
-    xtest = np.concatenate((fixed.reshape(-1, 1), np.array(x).reshape(-1, 1))).T
-    xtest = xtest.astype(np.float32)
-
-    try:
-        preds = predict(m, l, xtest)#m.predict(xtest)
-        mean = preds.mean
-        #mean = mean.astype(np.float32)
-    except ValueError:
-        logger.info('mean is error')
-        print('value error in mean, defaulting to -9999')
-        mean = -9999
-
-    try:
-        preds = predict(m1, l1, xtest)#m1.predict(xtest)
-        var = preds.variance
-        #var = preds.astype(np.float32)
-    except ValueError:
-        var = 0
-        logger.info('error in varaince')
-        print('value error in var, defaulting to 0')
-    return mean + kappa * var
 
 def predict(model, likelihood, x):
 
