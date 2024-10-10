@@ -148,6 +148,7 @@ class DynamicNN(nn.Module):
     def extract(self, x):
         # Pass input through the layers (up to the last one before the final output)
         for layer in self.layers:
+            
             x = layer(x)
         return x
     
@@ -177,40 +178,39 @@ class MultiTaskGPModel_DKL(gpytorch.models.ApproximateGP): # approx vs exact
     
 
 
-class GPRegressionModel_DKL(gpytorch.models.ExactGP):
+# class GPRegressionModel_DKL(gpytorch.models.ExactGP):
 
-        def __init__(self, train_x, train_y, likelihood, seed,feature_extractor= None):
-            self.seed=seed
-            random.seed(self.seed)
-            np.random.seed(self.seed)
-            torch.manual_seed(self.seed)
-            super(GPRegressionModel_DKL, self).__init__(train_x, train_y, likelihood)
+#         def __init__(self, train_x, train_y, likelihood, seed,feature_extractor= None):
+#             self.seed=seed
+#             random.seed(self.seed)
+#             np.random.seed(self.seed)
+#             torch.manual_seed(self.seed)
+#             super(GPRegressionModel_DKL, self).__init__(train_x, train_y, likelihood)
 
 
-            self.mean_module = gpytorch.means.ConstantMean()
-            self.covar_module = gpytorch.kernels.GridInterpolationKernel( # this is to approx kernel
-                #gpytorch.kernels.ScaleKernel(gpytorch.kernels.spectral_mixture_kernel(num_mixtures=4)),
-                gpytorch.kernels.SpectralMixtureKernel(num_mixtures=4, ard_num_dims=2), # bc SM shouldnt be combined with scale kernels
-                # TODO set batch size??
-                num_dims=2, grid_size=100
-            )
-            self.feature_extractor = feature_extractor
-            self.X = train_x
+#             self.mean_module = gpytorch.means.ConstantMean()
+#             self.covar_module = gpytorch.kernels.GridInterpolationKernel( # this is to approx kernel
+#                 #gpytorch.kernels.ScaleKernel(gpytorch.kernels.spectral_mixture_kernel(num_mixtures=4)),
+#                 gpytorch.kernels.SpectralMixtureKernel(num_mixtures=4, ard_num_dims=2), # bc SM shouldnt be combined with scale kernels
+#                 # TODO set batch size??
+#                 num_dims=2, grid_size=100
+#             )
+#             self.feature_extractor = feature_extractor
+#             # This module will scale the NN features so that they're nice values
+#             self.scale_to_bounds = gpytorch.utils.grid.ScaleToBounds(0, 1.) # was -1 but changed to match the other parts  
 
-            # This module will scale the NN features so that they're nice values
-            self.scale_to_bounds = gpytorch.utils.grid.ScaleToBounds(0, 1.) # was -1 but changed to match the other parts  
+#         def forward(self, x):
+#             random.seed(self.seed)
+#             np.random.seed(self.seed)
+#             torch.manual_seed(self.seed)
+#             # We're first putting our data through a deep net (feature extractor)
+#             self.feature_extractor.joint_gp_training_phase = True
+#             projected_x = self.feature_extractor(x)
+#             projected_x = self.scale_to_bounds(projected_x)  # Make the NN values "nice"
 
-        def forward(self, x):
-            random.seed(self.seed)
-            np.random.seed(self.seed)
-            torch.manual_seed(self.seed)
-            # We're first putting our data through a deep net (feature extractor)
-            projected_x = self.feature_extractor(x)
-            projected_x = self.scale_to_bounds(projected_x)  # Make the NN values "nice"
-
-            mean_x = self.mean_module(projected_x)
-            covar_x = self.covar_module(projected_x)
-            return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
+#             mean_x = self.mean_module(projected_x)
+#             covar_x = self.covar_module(projected_x)
+#             return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
         
 class GPRegressionModel_DKL(gpytorch.models.ExactGP):
 
@@ -226,17 +226,17 @@ class GPRegressionModel_DKL(gpytorch.models.ExactGP):
             self.mean_module = gpytorch.means.ConstantMean()
             self.covar_module = gpytorch.kernels.GridInterpolationKernel( # this is to approx kernel
                 #gpytorch.kernels.ScaleKernel(gpytorch.kernels.spectral_mixture_kernel(num_mixtures=4)),
-                gpytorch.kernels.SpectralMixtureKernel(num_mixtures=5, ard_num_dims=2), # bc SM shouldnt be combined with scale kernels
+                
+                gpytorch.kernels.SpectralMixtureKernel(num_mixtures=4, ard_num_dims=2), # bc SM shouldnt be combined with scale kernels
                 # TODO set batch size??
-                num_dims=2, grid_size=100
+                num_dims=2, grid_size=200
             )
             
             self.feature_extractor = feature_extractor
-            self.X = train_x
             self.append_sim_column=append_sim_column 
 
             # This module will scale the NN features so that they're nice values
-            self.scale_to_bounds = gpytorch.utils.grid.ScaleToBounds(-1, 1.)
+            self.scale_to_bounds = gpytorch.utils.grid.ScaleToBounds(0, 1.)
             # was -1 but changed to match the other parts  
 
         def forward(self, x):
@@ -244,9 +244,8 @@ class GPRegressionModel_DKL(gpytorch.models.ExactGP):
             np.random.seed(self.seed)
             torch.manual_seed(self.seed)
             self.feature_extractor.joint_gp_training_phase = True
-            projected_x = self.feature_extractor(self.X)
+            projected_x = self.feature_extractor(x)
             projected_x = self.scale_to_bounds(projected_x)  # Make the NN values "nice"
-
             mean_x = self.mean_module(projected_x)
             covar_x = self.covar_module(projected_x)
             return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
@@ -382,9 +381,6 @@ def metatrain_DKL_wilson(model, X_train, y_train, likelihood, seed,
     mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
     scheduler = scheduler(optimizer, mode='min', factor=0.1, patience=5, verbose=True)
 
-    train_dataset = torch.utils.data.TensorDataset(X_train, y_train)
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-
     if X_test is not None and y_test is not None:
         val_dataset = torch.utils.data.TensorDataset(X_test, y_test)
         val_dataloader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size, shuffle=True)
@@ -394,16 +390,12 @@ def metatrain_DKL_wilson(model, X_train, y_train, likelihood, seed,
     loss_values = []
     test_loss_vals = []
 
-    
+    model.train()
+    likelihood.train()
     for i in iterator:
         train_loss=0.0
         val_rmse=0.0
         val_nnl=0.0
-        model.train()
-        likelihood.train()
-        #for batch_X, batch_y in train_loader:
-        
-            # Zero backprop gradients
         optimizer.zero_grad()
         # Get output from model
         output = model(X_train)
@@ -414,7 +406,6 @@ def metatrain_DKL_wilson(model, X_train, y_train, likelihood, seed,
         optimizer.step()
         # Log the loss value
         train_loss += loss.item()
-        train_loss /= len(train_loader)
         loss_values.append(train_loss)
         print('train_loss', train_loss)
         # Evaluate on the test set if provided

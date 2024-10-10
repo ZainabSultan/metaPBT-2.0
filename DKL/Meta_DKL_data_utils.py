@@ -7,7 +7,7 @@ import torch
 from ray.tune.utils.util import flatten_dict
 import os
 import json
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
 import pandas as pd
 import gpytorch
 
@@ -32,9 +32,7 @@ def process_pb2_runs_metadata(meta_data_dir_list, hyperparams_bounds, similarity
     current_env_config.pop('env_name')
     hps_list = list(hyperparams_bounds.keys())
     df_list = []
-    _hyperparam_bounds_flat = flatten_dict(
-            hyperparams_bounds, prevent_delimiter=True
-        )
+
     len_each_run = []
     for meta_data_dir in meta_data_dir_list:
         if best:
@@ -53,7 +51,6 @@ def process_pb2_runs_metadata(meta_data_dir_list, hyperparams_bounds, similarity
                         for key, default in default_context.items():
                             context_features.setdefault(key, default)
                             current_env_config.setdefault(key, default)
-                        print(current_env_config, context_features)
                         current_env_context_values = np.array(list(current_env_config.values()))
                         context_values = np.array(list(context_features.values()))
                         similarity = current_env_context_values - context_values
@@ -79,7 +76,7 @@ def process_pb2_runs_metadata(meta_data_dir_list, hyperparams_bounds, similarity
                     fixed_colnames.extend(['reward_changes'])
                     data = data[fixed_colnames] #reordering cols  to fit pb2 existing code            
                     X = data.drop(columns=['reward_changes'])#normalize(data.drop(columns=['reward_changes','similiarity_feature']), limits)
-                    reward_scaler = StandardScaler()
+                    reward_scaler = MinMaxScaler()
                     rewards_scaled = reward_scaler.fit_transform(pd.DataFrame(data=data['reward_changes']))
                     y_df = pd.DataFrame(rewards_scaled, columns=['reward_changes'], index=X.index)
                     result = pd.concat([X, y_df], axis=1)

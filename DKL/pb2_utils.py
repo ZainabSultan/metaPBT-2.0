@@ -193,5 +193,6 @@ def select_length(Xraw, yraw, bounds, num_f):
 
             scores.append(m.log_likelihood())
         idx = np.argmax(scores)
+        print('score baseline: ', np.max(scores))
         length = (idx + int((min_len / 10))) * 10
         return length

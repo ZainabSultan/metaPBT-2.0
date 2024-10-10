@@ -1,12 +1,12 @@
 import random
 
-from sklearn.metrics import mean_squared_error, root_mean_squared_error
-from sklearn.preprocessing import MinMaxScaler, StandardScaler, Normalizer
+from sklearn.metrics import root_mean_squared_error
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
 import ray
 from ray import train, tune
 from ray.tune.utils.util import flatten_dict
-
+import math
 import argparse
 import json
 import os
@@ -33,8 +33,9 @@ from DKL.pb2_utils import (
     )
 
 import torch
-from DKL.pretraining_dkl import PB2_dkl_pretrained, GPRegressionModel_DKL
-from DKL.pretraining_dkl_utils import metatrain_DKL_wilson, pretrain_neural_network_model_with_sched, process_metadata
+from DKL.pretraining_dkl import PB2_dkl_pretrained#, GPRegressionModel_DKL
+from DKL.Meta_DKL_train_utils import metatrain_DKL_wilson,  GPRegressionModel_DKL
+from DKL.Meta_DKL_data_utils import process_pb2_runs_metadata
 
 from copy import deepcopy
 
@@ -46,36 +47,6 @@ import numpy as np
 from ray import train
 import re 
 
-if __name__ == "__main__":
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--max", type=int, default=1000_000)
-    parser.add_argument("--algo", type=str, default="PPO")
-    parser.add_argument("--num_workers", type=int, default=4)
-    parser.add_argument("--num_samples", type=int, default=4)
-    parser.add_argument("--t_ready", type=int, default=500_00)
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--context", type=str, default='{"gravity":1.0}')
-    parser.add_argument(
-        "--horizon", type=int, default=1600
-    )  # make this 1000 for other envs
-    parser.add_argument("--perturb", type=float, default=0.25)  # if using PBT
-    parser.add_argument("--env_name", type=str, default="CARLMountainCar") #"CartPole-v1"
-    parser.add_argument(
-        "--criteria", type=str, default="timesteps_total"
-    )  # "training_iteration", "time_total_s"
-    parser.add_argument(
-        "--net", type=str, default="32_32"
-    )  # May be important to use a larger network for bigger tasks.
-    parser.add_argument("--filename", type=str, default="")
-    parser.add_argument("--scheduler", type=str, default="metadkl")  # ['pbt', 'pb2']
-    parser.add_argument("--save_csv", type=bool, default=True)
-    parser.add_argument('--ws_dir', type=str, default=r'/home/fr/fr_fr/fr_zs53/DKL/metaPBT-2.0/testing_dir')
-    parser.add_argument('--metric', type=str, default='env_runners/episode_reward_mean')
-    #parser.add_argument('--metadata_dir_list', nargs='+', help='List of directories', required=True)
-
-    args = parser.parse_args()
-
 
 
 def extract_params_from_path(path):
@@ -85,7 +56,6 @@ def extract_params_from_path(path):
     # Extract the second-to-last directory
     if len(directories) > 1:
         exp_name = directories[-2]  # Get the second-to-last element
-        print(exp_name)
         env_name = exp_name.split('_')[0]
         match = re.search(r'_(.*?)_pb2', exp_name)
         if match:
@@ -98,7 +68,6 @@ def extract_params_from_path(path):
             # Split by underscores
             
             pairs = extracted_part.split('_')
-            print(pairs)
             config = {'env_name': env_name}
             feature_name = ''
             for i in pairs:
@@ -117,7 +86,6 @@ def extract_params_from_path(path):
                     
 
         # Print the result dictionary
-        print(config)
         return config
 
 
@@ -187,28 +155,30 @@ architecture = [
 def dynamic_exp(config):
     train_dir_list = config['train_dir_list']
     test_dir = config['test_dir']
-    print(test_dir)
+
     seed = config['seed']
-    lr = config['lr']
     test_env_config = extract_params_from_path(test_dir)
     #x_train, y_train, x_val, y_val = process_metadata(meta_data_dir_list=train_dir_list, hyperparams_bounds=config['hyperparam_bounds'], current_env_config=deepcopy(test_env_config))
-    X, y =  process_metadata(meta_data_dir_list=train_dir_list, hyperparams_bounds=config['hyperparam_bounds'], current_env_config=deepcopy(test_env_config), partition_val=False)
-    x_test, y_test = process_metadata([test_dir], hyperparams_bounds=config['hyperparam_bounds'], current_env_config=deepcopy(test_env_config), partition_val=False)
+    X, y =  process_pb2_runs_metadata(meta_data_dir_list=train_dir_list, hyperparams_bounds=config['hyperparam_bounds'], current_env_config=deepcopy(test_env_config), partition_val=False)
+    x_test, y_test = process_pb2_runs_metadata([test_dir], hyperparams_bounds=config['hyperparam_bounds'], current_env_config=deepcopy(test_env_config), partition_val=False)
     # parttioton by t_perutb
     x_test = x_test.values
     y_test = y_test.values
-    t_perturb_simulation = 5
+    t_perturb_simulation = 12 # 50000 / 4000 
     for i in range(t_perturb_simulation, len(x_test), t_perturb_simulation):
-        chunk_indices = range(i, min(i + t_perturb_simulation, len(x_test)))
         Xraw = x_test[:i, :]
-        # Access the corresponding chunk from `other_array` using the same indices
         yraw = y_test[:i]
-        x_test = x_test[i:, :]
-        y_test = y_test[i:]
-        rsme_meta_model = create_and_test_meta_model(Xraw, yraw, config, X, y, x_test, y_test)
-        rsme_baseline = create_and_test_baseline_model(Xraw, yraw, config, x_test, y_test)
+
+        x_test_exp = x_test[i:, :]
+        y_test_exp = y_test[i:]        
         
-        print('One interval done')
+        
+        rsme_meta_model = create_and_test_meta_model(Xraw, yraw, config, X, y, x_test_exp, y_test_exp)
+        rsme_baseline = create_and_test_baseline_model(Xraw, yraw, config, x_test_exp, y_test_exp)
+
+        #train.report({'rsme_meta': rsme_meta_model, 'rsme_baseline': rsme_baseline, 'is_better': rsme_baseline > rsme_meta_model, 'iteration': i})
+        
+        print(f'{i}th interval done')
         if rsme_baseline < rsme_meta_model:
             print('rabena yestor')
         else:
@@ -286,53 +256,74 @@ def create_gp(config):
 
 def create_and_test_meta_model(Xraw, yraw, config, meta_x, meta_y, x_test, y_test):
     hp_bounds = config['hyperparam_bounds']
+    random.seed(config['seed'])
+    np.random.seed(config['seed'])
+    torch.manual_seed(config['seed'])
     
     bounds = flatten_dict(
             hp_bounds, prevent_delimiter=True
         )    
     neural_network = create_nn_model(config)
-    seed = 0
-    sim_feature = 0.0
-
-    
-
+    seed = config['seed']
     X_train = np.concatenate([meta_x.values, Xraw], axis=0)
-    base_vals = np.array(list(bounds.values())).T
     oldpoints = X_train[:, :3 ]
 
     limits = get_limits(oldpoints, bounds)
+    # print('all of us:')
+    # print(pd.DataFrame(data = X_train).describe())
+    # print('Xraw, so just our test')
+    # print(pd.DataFrame(data = Xraw).describe())
+    # print('meta data only')
+    # print(meta_x.describe())
     X = normalize(X_train, limits)
+    # print('normalised using limits: ')
+    # print(pd.DataFrame(data=X).describe())
+    
     scaler = StandardScaler()
-    y = scaler.fit_transform(yraw.reshape(-1, 1)).reshape(yraw.shape[0],-1)
-    y = np.concatenate([meta_y.values, y.flatten()], axis=0)
-
-    likelihood = gpytorch.likelihoods.GaussianLikelihood()
+    scaler_rewards= MinMaxScaler()
+    yraw = scaler_rewards.fit_transform(yraw.reshape(-1, 1))
+    y = np.concatenate([meta_y.values, yraw.flatten()], axis=0)
+    y = scaler.fit_transform(y.reshape(-1, 1)).reshape(y.shape[0],-1)
+    
 
     train_x = torch.tensor(X, dtype=torch.float32)
     train_y =torch.squeeze(torch.tensor(y, dtype=torch.float32))
+
+    likelihood = gpytorch.likelihoods.GaussianLikelihood()
+
+
     m = GPRegressionModel_DKL(train_x, train_y, feature_extractor=neural_network, likelihood=likelihood,seed=seed)
-    m_trained, mll_m ,l= metatrain_DKL_wilson(model=m, X_train=train_x, y_train=train_y, likelihood=likelihood,seed=seed,training_iterations=4)
+    m_trained, mll_m ,l= metatrain_DKL_wilson(model=m, X_train=train_x, y_train=train_y, likelihood=likelihood,seed=seed,training_iterations=config['num_epochs_gp'])
 
     x_test = normalize(x_test, limits)
-    y_test = scaler.transform(y_test.reshape(-1, 1))
+    x_test = torch.tensor(x_test, dtype=torch.float32)
+
+        
     m_trained.eval()
     l.eval()
-    x = torch.tensor(x_test, dtype=torch.float32)
     with torch.no_grad(), gpytorch.settings.use_toeplitz(False), gpytorch.settings.fast_pred_var():
-        preds = m_trained(x)
-    rmse = torch.sqrt(torch.mean((preds.mean - y_test)**2))
-    print('RSME META MODEL: {}'.format(rmse.item())) 
+        preds = m_trained(x_test)
+    
+    y_test = scaler_rewards.transform(y_test.reshape(-1, 1))
+    rmse = root_mean_squared_error(y_test, np.array(preds.mean))#torch.sqrt(torch.mean((preds.mean - y_test)**2))
+    rmse = rmse/math.sqrt(len(x_test))
+    print(f'RSME META MODEL: {rmse}') 
+    
     return rmse
 
 
 def create_and_test_baseline_model(Xraw, yraw, config, x_test, y_test):
     
 
+    # removing similariyt featurws
+    random.seed(config['seed'])
+    np.random.seed(config['seed'])
+    torch.manual_seed(config['seed'])
+    hp_bounds = config['hyperparam_bounds']
+    # delete the similarity feature
     num_f = 2
     Xraw = np.delete(Xraw, 2, axis=1)
-    x_test = np.delete(x_test, 2, axis=1) # removing similariyt featurws
-
-    hp_bounds = config['hyperparam_bounds']
+    x_test = np.delete(x_test, 2, axis=1) 
     
     bounds = flatten_dict(
             hp_bounds, prevent_delimiter=True
@@ -345,16 +336,18 @@ def create_and_test_baseline_model(Xraw, yraw, config, x_test, y_test):
 
     base_vals = np.array(list(bounds.values())).T
     oldpoints = Xraw[:, :num_f]
-    old_lims = np.concatenate(
-        (np.max(oldpoints, axis=0), np.min(oldpoints, axis=0))
-    ).reshape(2, oldpoints.shape[1])
-    limits = np.concatenate((old_lims, base_vals), axis=1)
+    # old_lims = np.concatenate(
+    #     (np.max(oldpoints, axis=0), np.min(oldpoints, axis=0))
+    # ).reshape(2, oldpoints.shape[1])
+    # limits = np.concatenate((old_lims, base_vals), axis=1)
+    limits = get_limits(oldpoints, bounds)
 
     X = normalize(Xraw, limits)
     scaler = StandardScaler()
 
     y = scaler.fit_transform(yraw.reshape(-1, 1) )
 
+    x_test = normalize(x_test, limits)
     kernel = TV_SquaredExp(
         input_dim=X.shape[1], variance=1.0, lengthscale=1.0, epsilon=0.1
     )
@@ -375,14 +368,12 @@ def create_and_test_baseline_model(Xraw, yraw, config, x_test, y_test):
         m.optimize()
 
     m.kern.lengthscale.fix(m.kern.lengthscale.clip(1e-5, 1))
-    x_test = normalize(x_test, limits)
+    
     preds, pred_vars = m.predict(x_test)
     
-
-    # Step 3: Calculate RMSE
     y_test = scaler.transform(y_test.reshape(-1, 1))
-
-    rmse = np.sqrt(root_mean_squared_error(y_test, preds))
+    # Step 3: Calculate RMSE
+    rmse = root_mean_squared_error(y_test, preds)/math.sqrt(len(x_test))
     print(f"RMSE BASELINE: {rmse}")
     return rmse 
 
@@ -493,7 +484,7 @@ search_space = {
     'seed' : 0,
     'lr' : 0.01, #tune.grid_search([0.01, 0.001, 0.0001]), # lr - gp #
     'num_epochs_nn': 5, #tune.grid_search([100]),
-        'hyperparam_bounds': {
+    'hyperparam_bounds': {
                 "lambda": [0.9, 0.99],
                 "clip_param": [0.1, 0.5],
                 #'gamma': [0.9,0.99],
@@ -501,7 +492,7 @@ search_space = {
                 #"train_batch_size": [1000, 10_000],
                 'num_sgd_iter': [3,30]
              },
-    'num_epochs_gp': 100,
+    'num_epochs_gp': 5,
     'architecture': tune.grid_search([archi_1, archi_2, archi_3])
 
 }
@@ -525,8 +516,8 @@ search_space = {
 
 }
 sampled_config = {
-    'train_dir_list': [ path_6, path_3, path_2],  # Only one option
-    'test_dir': path_4,                         # Only one option
+    'train_dir_list': [path_3],  # Only one option
+    'test_dir': path_5,                         # Only one option
     'seed': 0,                                  # Fixed value
     'lr': 0.01,                                 # Only one option from grid search
     'num_epochs_nn': 250,                         # Only one option
@@ -538,34 +529,37 @@ sampled_config = {
                 #"train_batch_size": [1000, 10_000],
                 'num_sgd_iter': [3,30]
              },
-    'num_epochs_gp': 5,                       # Only one option
-    'architecture': archi_3          # Only one option
+    'num_epochs_gp': 40,                       # Only one option
+    'architecture': archi_1          # Only one option
 }
-
-
-dynamic_exp(config=sampled_config)
-#ray.init()  
-#tune.run(create_gp, config=search_space, num_samples=1, name='arewelearning', storage_path=args.ws_dir)
 
 def complex_function(X):
     x1, x2, x3 = X[:, 0], X[:, 1], X[:, 2]
     # Create a complex relationship combining trigonometric, exponential, and polynomial terms
     y = np.sin(2 * np.pi * x1) + np.cos(3 * np.pi * x2) + np.exp(0.5 * x3) + 0.1 * x1**2 - 0.05 * x2**3
     return y
-# from math import floor
-# n_samples = 8000
-# np.random.seed(0)
-# X = np.random.uniform(-5, 5, size=(n_samples, 7))
+
+def generate_dummy_data():
+    
+    from math import floor
+    n_samples = 2000
+    np.random.seed(0)
+    X = np.random.uniform(-5, 5, size=(n_samples, 7))
 # #X = torch.randn(2000, 3)
-# y = complex_function(X)
-# train_n = int(floor(0.8 * len(X)))
-# train_x = X[:train_n, :]
-# train_y = y[:train_n].flatten()
-# X_train = torch.tensor(X, dtype=torch.float32)
-# y_train = torch.tensor(y, dtype=torch.float32)
-# print(train_y)
-# test_x = torch.tensor(X[train_n:, :], dtype=torch.float32)
-# test_y = torch.tensor(y[train_n:], dtype=torch.float32)
+    y = complex_function(X)
+    train_n = int(floor(0.8 * len(X)))
+    train_x = X[:train_n, :]
+    train_y = y[:train_n].flatten()
+    X_train = torch.tensor(train_x, dtype=torch.float32)
+    y_train = torch.tensor(train_y, dtype=torch.float32)
+    test_x = torch.tensor(X[train_n:, :], dtype=torch.float32)
+    test_y = torch.tensor(y[train_n:], dtype=torch.float32)
+    return X_train, y_train, test_x, test_y
+dynamic_exp(config=sampled_config)
+#ray.init()  
+#tune.run(create_gp, config=search_space, num_samples=1, name='arewelearning', storage_path=args.ws_dir)
+
+
 
 # pretrain_neural_network_model_with_sched(X_train = train_x, y_train=train_y, model=create_nn_model(sampled_config),
 #                                          X_val=test_x, y_val=test_y, seed=0)
