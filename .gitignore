@@ -7,17 +7,19 @@
 
 **/data/
 
-
+/*.zip
 **/trajectories/
-
+DKL/EPI/trained_policies
+DKL/EPI/embedding_models
+DKL/EPI/datasets
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
-
+.ruff_cache
 # C extensions
 *.so
-
+results_old/
 # Distribution / packaging
 .Python
 build/

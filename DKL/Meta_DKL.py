@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Callable, Dict, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
+from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from torch import nn
 from ray.tune import TuneError
@@ -13,12 +14,13 @@ from ray.tune.schedulers.pbt import _PBTTrialState
 from ray.tune.utils.util import flatten_dict, unflatten_dict
 from ray.util.debug import log_once
 #from DKL.PB2_DKL_utils import train_DKL_wilson, UCB_DKL,optimize_acq_DKL
-from DKL.Meta_DKL_data_utils import process_pb2_runs_metadata, standardize, normalize
-from DKL.Meta_DKL_train_utils import metatrain_DKL_wilson, UCB_DKL, optimize_acq_DKL, DynamicNN, GPRegressionModel_DKL
+from DKL.Meta_DKL_data_utils import process_pb2_runs_metadata, standardize, normalize, get_metadata_dirs
+from DKL.Meta_DKL_train_utils import metatrain_DKL, UCB_DKL, optimize_acq_DKL, DynamicNN, GPRegressionModel_DKL, ExactGPModel, train_gp_variance
 import math
 import torch
-import gpytorch
+import gpytorch # 5 4 9 5 
 import random
+
 logging.getLogger().setLevel(logging.INFO)
 if TYPE_CHECKING:
     from ray.tune.execution.tune_controller import TuneController
@@ -55,7 +57,7 @@ import numpy as np
 
 
 def _fill_config(
-    config: Dict, hyperparam_bounds: Dict[str, Union[dict, list, tuple]],seed
+    config: Dict, hyperparam_bounds: Dict[str, Union[dict, list, tuple]]
 ) -> Dict:
     """Fills missing hyperparameters in config by sampling uniformly from the
     specified `hyperparam_bounds`.
@@ -72,7 +74,7 @@ def _fill_config(
         if isinstance(bounds, dict):
             if param_name not in config:
                 config[param_name] = {}
-            filled_hyperparams[param_name] = _fill_config(config[param_name], bounds,seed)
+            filled_hyperparams[param_name] = _fill_config(config[param_name], bounds)
         elif isinstance(bounds, (list, tuple)) and param_name not in config:
             if log_once(param_name + "-missing"):
                 logger.debug(
@@ -120,8 +122,8 @@ def _select_config(
     """
     # for DKL
     bounds = self._hyperparam_bounds_flat
-    neural_network = self.neural_network
     seed = self.seed
+    neural_network = DynamicNN(self.neural_net_archi,input_dim=self.num_inputs) 
     if np.isscalar(self.sim_feature):
         # If sim_feature is a scalar, reshape it to be a single column
         sim_feature_col = np.full((Xraw.shape[0], 1), self.sim_feature)
@@ -132,17 +134,44 @@ def _select_config(
     # Insert sim_feature as the third column (after the first two columns of Xraw)
     
     Xraw_ = np.hstack([Xraw[:, :2], sim_feature_col, Xraw[:, 2:]])
-    print(Xraw.shape, Xraw_.shape, self.metadata_train_x.values.shape)
+    
+    #yraw = scaler_rewards.fit_transform(yraw.reshape(-1, 1)) 
     # oldpoints = Xraw[:, :self.num_fixed_params ]
     #
     # limits = get_limits(oldpoints, bounds)    
 
-    # length = select_length(Xraw, yraw, bounds, num_f)
+    # length = select_length(Xraw, yraw, bounds, self.num_fixed_params)
 
     # Xraw = Xraw[-length:, :]
     # yraw = yraw[-length:]
+    if len(Xraw) < 200:
+        # val set contains meta data 
+        X_train_split, X_val, y_train_split, y_val = train_test_split(
+        self.metadata_train_x.values, self.metadata_train_y.values, 
+        test_size=0.1,  # 20% for validation
+        random_state=seed  # Set random seed for reproducibility
+        )
+        
+        X_train = np.concatenate([X_train_split, Xraw_], axis=0)
+        
+        scaler_rewards= MinMaxScaler()
+        yraw = scaler_rewards.fit_transform(yraw.reshape(-1, 1)) 
+        y = np.concatenate([y_train_split, yraw.flatten() ], axis=0)
+        
+    else:
+        X_train_split, X_val, y_train_split, y_val = train_test_split(
+        Xraw_, yraw, 
+        test_size=0.2,  # 20% for validation
+        random_state=seed  # Set random seed for reproducibility
+        )
+        
+        X_train = np.concatenate([self.metadata_train_x.values, X_train_split], axis=0)
+        scaler_rewards= MinMaxScaler()
+        y_train_split = scaler_rewards.fit_transform(y_train_split.reshape(-1, 1)) 
+        y_val = scaler_rewards.transform(y_val.reshape(-1, 1))
+    
+        y = np.concatenate([self.metadata_train_y.values, y_train_split.flatten()], axis=0)
 
-    X_train = np.concatenate([self.metadata_train_x.values, Xraw_], axis=0)
     base_vals = np.array(list(bounds.values())).T
     oldpoints = X_train[:, :self.num_fixed_params ]
     # old_lims = np.concatenate(
@@ -151,26 +180,29 @@ def _select_config(
     # limits = np.concatenate((old_lims, base_vals), axis=1)
     limits = get_limits(oldpoints, bounds)
     X = normalize(X_train, limits)
-    y = standardize(yraw)
-    y = np.concatenate([self.metadata_train_y.values, y], axis=0)
+    X_val = normalize(X_val, limits)
+    scaler = StandardScaler()
+    y = scaler.fit_transform(y.reshape(-1,1)).reshape(y.shape[0],-1) 
+    y_val = scaler.transform(y_val.reshape(-1,1)).reshape(y_val.shape[0],-1) 
+    
     newpoint_ = np.hstack([newpoint[:2], self.sim_feature, newpoint[ 2:]])
-    print(newpoint_, oldpoints.shape)
     fixed = normalize(newpoint_, oldpoints)
     
     logger.info('about to go train')
     likelihood = gpytorch.likelihoods.GaussianLikelihood()
 
     train_x = torch.tensor(X, dtype=torch.float32)
-    train_y =torch.squeeze(torch.tensor(y, dtype=torch.float32))
-    print(X.shape, y.shape)
-    
-    m = self.deep_kernel_gaussian_model(train_x, train_y, feature_extractor=neural_network, likelihood=likelihood,seed=seed)
-    m_trained, mll_m ,l= metatrain_DKL_wilson(model=m, X_train=train_x, y_train=train_y, likelihood=likelihood,seed=seed)
-    # if there are current runs you must freeze the neural network heart in order 
-    # not to corrupt it with the fake values
+    train_y =torch.squeeze(torch.tensor(y, dtype=torch.float32))    
+    X_val = torch.tensor(X_val, dtype=torch.float32)
+    y_val =torch.squeeze(torch.tensor(y_val, dtype=torch.float32)) 
+
+    m = self.deep_kernel_gaussian_model(train_x, train_y, feature_extractor=neural_network, likelihood=likelihood)
+    m_trained, mll_m ,l= metatrain_DKL(model=m, X_train=train_x, y_train=train_y, likelihood=likelihood, X_val=X_val, y_val=y_val)
+
     if current is None:
-        m1_trained = deepcopy(m_trained)
-        l1 = deepcopy(l)
+        likelihood_v = gpytorch.likelihoods.GaussianLikelihood()
+        m_variance = ExactGPModel(train_x=train_x, train_y=train_y, likelihood=likelihood_v)
+        m1_trained, l1 = train_gp_variance(model=m_variance, likelihood=likelihood_v, train_x=train_x, train_y=train_y)
     else:
         # add the current trials to the dataset
         logger.info('training new gp')
@@ -183,15 +215,18 @@ def _select_config(
         ypad = np.zeros(current.shape[0])
         ypad = ypad.reshape(-1, 1)
         ynew = np.vstack((y, ypad))
-
+        scaler = StandardScaler()
+        ynew = scaler.fit_transform(ynew.reshape(-1,1)).reshape(ynew.shape[0],-1) 
         train_xnew = torch.tensor(Xnew, dtype=torch.float32)
         train_ynew = torch.squeeze(torch.tensor(ynew, dtype=torch.float32))
-        likelihood = gpytorch.likelihoods.GaussianLikelihood()
-        m1 = self.deep_kernel_gaussian_model(train_xnew, train_ynew, feature_extractor=neural_network, likelihood=likelihood,seed=seed)
-        m1_trained, mll_m1,l1 = metatrain_DKL_wilson(model=m1, X_train=train_xnew, y_train=train_ynew, likelihood=likelihood, freeze=True,seed=seed)
+        likelihood_v = gpytorch.likelihoods.GaussianLikelihood()
+        m_variance = ExactGPModel(train_x=train_x, train_y=train_y, likelihood=likelihood_v)
+        m1_trained,l1 = train_gp_variance(model=m_variance, likelihood=likelihood_v, train_x=train_xnew, train_y=train_ynew)
+
+        #m1_trained, mll_m1,l1 = metatrain_DKL(model=m1, X_train=train_xnew, y_train=train_ynew, likelihood=likelihood, seed=seed, X_val=X_val, y_val=y_val)
 
     #xt = minimise_wrt_acq()
-    xt = optimize_acq_DKL(UCB_DKL, m_trained, m1_trained,l,l1, fixed, self.num_fixed_params ,seed)
+    xt = optimize_acq_DKL(UCB_DKL, m_trained, m1_trained,l,l1, fixed, self.num_fixed_params ,X)
 
     # convert back...denormalise
     xt = xt * (np.max(base_vals, axis=0) - np.min(base_vals, axis=0)) + np.min(
@@ -300,7 +335,9 @@ class Meta_DKL(PopulationBasedTraining):
         synch: bool = False,
         custom_explore_fn: Optional[Callable[[dict], dict]] = None,
         seed:int =None,
-        meta_data_dir_list: list=None,
+        num_meta_envs=1,
+        meta_selection_method='closest',
+        #meta_data_dir_list: list=None,
         current_env_config: dict =None,
         num_extra_info_dims: int = 1,
         warmstart_only: bool = False,
@@ -316,7 +353,8 @@ class Meta_DKL(PopulationBasedTraining):
         {'type': 'linear', 'out_dim': 50},
         {'type': 'relu'},
         {'type': 'linear', 'out_dim': 2}  # Feature extraction output size
-    ]
+    ],
+        meta_data_base_dir = ''
         
             ):
 
@@ -333,10 +371,10 @@ class Meta_DKL(PopulationBasedTraining):
             raise TuneError(
                 "`hyperparam_bounds` must be specified to use PB2 scheduler."
             )
-        
+        meta_data_dir_list = get_metadata_dirs(current_env_config,num_meta_envs, meta_selection_method, meta_data_base_dir)
         if not meta_data_dir_list:
             raise TuneError(
-                "`meta dir list needs to be specified to do meta learning."
+                "`cant find meta data dirs."
             )
 
 
@@ -374,28 +412,26 @@ class Meta_DKL(PopulationBasedTraining):
         # Current = trials running that have already re-started after reaching
         #           the checkpoint. When exploring we care if these trials
         #           are already in or scheduled to be in the next round.
+        
         self.current = None
         self.num_fixed_params = 2 + num_extra_info_dims # 2 = time and reward
 
-        num_inputs = self.num_fixed_params + len(hyperparam_bounds) # time, reward, ,sim feat and num of HPs
-        self.neural_network = DynamicNN(self.neural_net_archi,input_dim=num_inputs, seed=seed) 
+        self.num_inputs = self.num_fixed_params + len(hyperparam_bounds) # time, reward, ,sim feat and num of HPs
+        
 
         if type_meta_runs == 'pb2':
-
-            x_train, y_train, x_val, y_val = process_pb2_runs_metadata(self.meta_data_dir_list, self._hyperparam_bounds, current_env_config=self.current_env_config)
+            x_train, y_train= process_pb2_runs_metadata(self.meta_data_dir_list, self._hyperparam_bounds, current_env_config=self.current_env_config, partition_val=False)
         else:
             ...
 
         self.metadata_train_x = x_train
         self.metadata_train_y = y_train
-        self.metadata_val_x = x_val
-        self.metadata_val_y = y_val
         
         # if self.pretrain_neural_net:
         #     self.neural_network = pretrain_neural_network_model(model=self.neural_network, X_train=x_train,y_train=y_train, X_val=x_val,y_val= y_val ,seed=seed, num_epochs=100)
 
     def on_trial_add(self, tune_controller: "TuneController", trial: Trial):
-        filled_hyperparams = _fill_config(trial.config, self._hyperparam_bounds,self.seed)
+        filled_hyperparams = _fill_config(trial.config, self._hyperparam_bounds)
         # Make sure that the params we sampled show up in the CLI output
         trial.evaluated_params.update(flatten_dict(filled_hyperparams))
         super().on_trial_add(tune_controller, trial)

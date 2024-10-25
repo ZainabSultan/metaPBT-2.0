@@ -116,7 +116,7 @@ def UCB(m, m1, x, fixed, kappa=None):
         preds = m.predict(xtest)
         mean = preds[0][0][0]
     except ValueError:
-        print('value error in mean, defaulting to -9999')
+        #print('value error in mean, defaulting to -9999')
         mean = -9999
 
     try:
@@ -124,14 +124,12 @@ def UCB(m, m1, x, fixed, kappa=None):
         var = preds[1][0][0]
     except ValueError:
         var = 0
-        print('value error in var, defaulting to 0')
+        #print('value error in var, defaulting to 0')
     return mean + kappa * var
 
 
-def optimize_acq(func, m, m1, fixed, num_f,seed):
+def optimize_acq(func, m, m1, fixed, num_f):
     """Optimize acquisition function."""
-
-    np.random.seed(seed)
     
 
     opts = {"maxiter": 200, "maxfun": 200, "disp": False}
@@ -157,7 +155,12 @@ def optimize_acq(func, m, m1, fixed, num_f,seed):
         if val > best_value:
             best_value = val
             best_theta = res.x
-
+    xtest = np.concatenate((fixed.reshape(-1, 1), np.array(np.clip(best_theta, 0, 1)).reshape(-1, 1))).T
+    preds = m.predict(xtest)
+    try:
+        print(preds[0][0][0], preds[0][0][1])
+    except:
+        print(preds)
     return np.clip(best_theta, 0, 1)
 
 

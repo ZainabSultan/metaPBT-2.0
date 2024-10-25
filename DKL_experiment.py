@@ -15,11 +15,12 @@ import numpy as np
 import pandas as pd
 from ray.tune.registry import register_env
 import torch
-from DKL.PB2_DKL import PB2_dkl
+
 from ray.tune import run, sample_from
 from ray.tune.schedulers import PopulationBasedTraining
 from ray.tune.schedulers.pb2 import PB2
 from ray.rllib.algorithms import ppo
+from CARLWrapper import env_creator
 
 
 
@@ -45,27 +46,6 @@ def explore(config):
         config["lambda"] = 1
     config["train_batch_size"] = int(config["train_batch_size"])
     return config
-
-def env_creator(env_config):
-    print(env_config)
-    env_name = env_config.pop('env_name')
-    if env_name == 'CARLCartPole':
-        from CARLWrapper import CARLCartPoleWrapper as env
-    elif env_name == 'CARLMountainCar':
-        from CARLWrapper import CARLMountainCarWrapper as env
-    elif env_name == 'CARLMountainCarCont':
-        from CARLWrapper import CARLMountainCarContWrapper as env
-    elif env_name == 'CARLAcrobot':
-        from CARLWrapper import CARLAcrobotWrapper as env
-    elif env_name == 'CARLPendulum':
-        from CARLWrapper import CARLPendulumWrapper as env
-    elif env_name == 'CARLLunarLander':
-        from CARLWrapper import CARLLunarLanderWrapper as env
-    elif env_name == 'CARLBipedalWalker':
-        from CARLWrapper import CARLBipedalWalkerWrapper as env
-    else:
-        raise NotImplementedError
-    return env(contexts={0:env_config})
 
 
 
@@ -102,15 +82,11 @@ if __name__ == "__main__":
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
+    easy_envs = ['CARLMountainCar', 'CARLCartPole', 'CARLAcrobot', 'CARLPendulum', 'CARLMountainCar']
     
     try:
         register_env( args.env_name, env_creator)
 
-
-        if args.env_name =='CARLBipedalWalker':
-            horizon = 1600
-        else:
-            horizon = 1000
 
         timelog = datetime.now().strftime("%Y-%m-%d_%H:%M:%S")
         if args.smoke_test:
@@ -134,26 +110,27 @@ if __name__ == "__main__":
             ))
 
 
-        pb2_dkl=PB2_dkl(
-            time_attr=args.criteria,
-            #metric=args.metric,
-            #mode="max",
-            perturbation_interval=args.t_ready,
-            quantile_fraction=args.perturb,  # copy bottom % with top %
-            # Specifies the hyperparam search space
-            hyperparam_bounds={
-                #"lambda": [0.9, 1.0],
-                #"clip_param": [0.1, 0.5],
-                "lr": [1e-5, 1e-3],
-                #"train_batch_size": [1000, 5000],
-                'num_sgd_iter': [3,30]
-                #"train_batch_size": [1000, 60000],
-            },
-            seed=args.seed,
-            synch=True
-            #save_path=args.dir
+        # pb2_dkl=Meta_DKL(
+        #     time_attr=args.criteria,
+        #     #metric=args.metric,
+        #     #mode="max",
+        #     perturbation_interval=args.t_ready,
+        #     quantile_fraction=args.perturb,  # copy bottom % with top %
+        #     # Specifies the hyperparam search space
+        #     hyperparam_bounds={
+        #         "lambda": [0.9, 1.0],
+        #         "clip_param": [0.1, 0.5],
+        #         "lr": [1e-5, 1e-3],
+        #         #"train_batch_size": [1000, 5000],
+        #         'num_sgd_iter': [3,30]
+        #         #"train_batch_size": [1000, 60000],
+        #     },
+        #     seed=args.seed,
+        #     synch=True
+        #     #save_path=args.dir
         
-        )
+        # )
+
         pb2 = PB2(
             time_attr=args.criteria,
             #metric=args.metric,
@@ -173,7 +150,7 @@ if __name__ == "__main__":
             synch=True
                     )
 
-        schedulers = { "pb2": pb2, 'pb2_dkl':pb2_dkl}
+        schedulers = { "pb2": pb2 }#'pb2_dkl':pb2_dkl}
         # # LR SAMPLER
         # loguniform_dist = tune.loguniform(1e-5, 1e-3)
         # samples_lr = [loguniform_dist.sample() for _ in range(args.num_samples)]
@@ -186,9 +163,27 @@ if __name__ == "__main__":
         config.environment(env=args.env_name, env_config=context_)
         config.seed = args.seed
         config.rollouts(num_envs_per_worker=1)
-        config.training(
+
+        if args.env_name in easy_envs:
+            config.training(
             lr=tune.loguniform(1e-5, 1e-3),
             #kl_coeff = 1.0,
+            grad_clip=2.5,
+            clip_param = tune.uniform(0.1, 0.5),
+            lambda_ = tune.uniform(0.9, 0.99),
+            num_sgd_iter = tune.qrandint(3,30),
+            #sgd_minibatch_size = tune.choice([128, 512, 2000]),
+            train_batch_size= 1000#tune.choice([1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10_000]),
+            #gamma=tune.uniform(0.9, 0.99),
+        #entropy_coeff=tune.uniform(0.01, 0.5),
+
+        )
+            print('easy env activated')
+        else:
+            config.training(
+            lr=tune.loguniform(1e-5, 1e-3),
+            #kl_coeff = 1.0,
+            grad_clip=2.5,
             clip_param = tune.uniform(0.1, 0.5),
             lambda_ = tune.uniform(0.9, 0.99),
             num_sgd_iter = tune.qrandint(3,30)
@@ -198,14 +193,17 @@ if __name__ == "__main__":
         #entropy_coeff=tune.uniform(0.01, 0.5),
 
         )
-        if args.env_name == 'CARLPendulum':
-            config.training(
-            lr=tune.loguniform(1e-5, 1e-3),
-            #kl_coeff = 1.0,
-            num_sgd_iter = tune.qrandint(3,30),
-            vf_clip_param= 10.0
 
-        )
+        
+        # if args.env_name == 'CARLPendulum':
+        #     config.training(
+        #     lr=tune.loguniform(1e-5, 1e-3),
+        #     #kl_coeff = 1.0,
+        #     grad_clip=2,
+        #     num_sgd_iter = tune.qrandint(3,30),
+        #     vf_clip_param= 10.0
+
+        # )
         
             
         run_name= "seed{}".format(

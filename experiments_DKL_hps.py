@@ -1,8 +1,9 @@
 import random
 
 from sklearn.metrics import root_mean_squared_error
+from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
-
+from scipy.stats import pearsonr
 import ray
 from ray import train, tune
 from ray.tune.utils.util import flatten_dict
@@ -11,7 +12,7 @@ import argparse
 import json
 import os
 import random
-from datetime import datetime
+from datetime import datetim e
 import seaborn as sns
 from matplotlib import pyplot as plt
 import numpy as np
@@ -33,8 +34,8 @@ from DKL.pb2_utils import (
     )
 
 import torch
-from DKL.pretraining_dkl import PB2_dkl_pretrained#, GPRegressionModel_DKL
-from DKL.Meta_DKL_train_utils import metatrain_DKL_wilson,  GPRegressionModel_DKL
+#from DKL.pretraining_dkl import PB2_dkl_pretrained#, GPRegressionModel_DKL
+from DKL.Meta_DKL_train_utils import UCB_DKL, metatrain_DKL, metatrain_DKL_wilson,  GPRegressionModel_DKL, GPRegressionModel_DKL_1, optimize_acq_DKL
 from DKL.Meta_DKL_data_utils import process_pb2_runs_metadata
 
 from copy import deepcopy
@@ -164,25 +165,36 @@ def dynamic_exp(config):
     # parttioton by t_perutb
     x_test = x_test.values
     y_test = y_test.values
-    t_perturb_simulation = 12 # 50000 / 4000 
-    for i in range(t_perturb_simulation, len(x_test), t_perturb_simulation):
-        Xraw = x_test[:i, :]
-        yraw = y_test[:i]
+    t_perturb_simulation  12 # 50000 / 4000 = 12 if u want to test for one PERTURB interv
+    perf= []
+    try:
+        neural_network = create_nn_model(config)
+        for i in range(t_perturb_simulation, len(x_test), t_perturb_simulation):
+            Xraw = x_test[:i, :]
+            yraw = y_test[:i]
 
-        x_test_exp = x_test[i:, :]
-        y_test_exp = y_test[i:]        
-        
-        
-        rsme_meta_model = create_and_test_meta_model(Xraw, yraw, config, X, y, x_test_exp, y_test_exp)
-        rsme_baseline = create_and_test_baseline_model(Xraw, yraw, config, x_test_exp, y_test_exp)
+            x_test_exp = x_test[i:, :]
+            y_test_exp = y_test[i:]     
+            
+            
+            rsme_meta_model = create_and_test_meta_model(Xraw, yraw, config, neural_network, X, y, x_test_exp, y_test_exp)
+            rsme_baseline = create_and_test_baseline_model(Xraw, yraw, config, x_test_exp, y_test_exp)
+            
 
-        #train.report({'rsme_meta': rsme_meta_model, 'rsme_baseline': rsme_baseline, 'is_better': rsme_baseline > rsme_meta_model, 'iteration': i})
-        
-        print(f'{i}th interval done')
-        if rsme_baseline < rsme_meta_model:
-            print('rabena yestor')
-        else:
-            print('rabena satar')
+            #train.report({'rsme_meta': rsme_meta_model, 'rsme_baseline': rsme_baseline, 'is_better': rsme_baseline > rsme_meta_model, 'iteration': i})
+            
+            print(f'{i}th interval done')
+            if rsme_baseline < rsme_meta_model:
+                print('rabena yestor')
+            else:
+                print('rabena satar')
+            perf.append({'pb2': rsme_baseline, 'meta':rsme_meta_model})
+        perf_df = pd.DataFrame(data=perf)
+        perf_df.to_csv(f'/home/fr/fr_fr/fr_zs53/DKL/metaPBT-2.0/DKL/RSME/rsme.csv')
+    except Exception as e:
+        print(e)
+        perf_df = pd.DataFrame(data=perf)
+        perf_df.to_csv(f'/home/fr/fr_fr/fr_zs53/DKL/metaPBT-2.0/DKL/RSME/rsme.csv')
 
 
 
@@ -254,7 +266,7 @@ def create_gp(config):
 
 
 
-def create_and_test_meta_model(Xraw, yraw, config, meta_x, meta_y, x_test, y_test):
+def create_and_test_meta_model(Xraw, yraw, config, neural_network, meta_x, meta_y, x_test, y_test):
     hp_bounds = config['hyperparam_bounds']
     random.seed(config['seed'])
     np.random.seed(config['seed'])
@@ -263,9 +275,37 @@ def create_and_test_meta_model(Xraw, yraw, config, meta_x, meta_y, x_test, y_tes
     bounds = flatten_dict(
             hp_bounds, prevent_delimiter=True
         )    
-    neural_network = create_nn_model(config)
+    
     seed = config['seed']
-    X_train = np.concatenate([meta_x.values, Xraw], axis=0)
+
+    if len(Xraw) < 200:
+        # val set contains meta data 
+        X_train_split, X_val, y_train_split, y_val = train_test_split(
+        meta_x.values, meta_y.values, 
+        test_size=0.1,  # 20% for validation
+        random_state=seed  # Set random seed for reproducibility
+        )
+        
+        X_train = np.concatenate([X_train_split, Xraw], axis=0)
+        
+        scaler_rewards= MinMaxScaler()
+        yraw = scaler_rewards.fit_transform(yraw.reshape(-1, 1)) 
+        y = np.concatenate([y_train_split, yraw.flatten() ], axis=0)
+        
+    else:
+        X_train_split, X_val, y_train_split, y_val = train_test_split(
+        Xraw, yraw, 
+        test_size=0.2,  # 20% for validation
+        random_state=seed  # Set random seed for reproducibility
+        )
+        
+        X_train = np.concatenate([meta_x.values, X_train_split], axis=0)
+        scaler_rewards= MinMaxScaler()
+        y_train_split = scaler_rewards.fit_transform(y_train_split.reshape(-1, 1)) 
+        y_val = scaler_rewards.transform(y_val.reshape(-1, 1))
+    
+        y = np.concatenate([meta_y.values, y_train_split.flatten()], axis=0)
+    #X_train =  np.concatenate([meta_x.values, Xraw], axis=0)
     oldpoints = X_train[:, :3 ]
 
     limits = get_limits(oldpoints, bounds)
@@ -280,34 +320,42 @@ def create_and_test_meta_model(Xraw, yraw, config, meta_x, meta_y, x_test, y_tes
     # print(pd.DataFrame(data=X).describe())
     
     scaler = StandardScaler()
-    scaler_rewards= MinMaxScaler()
-    yraw = scaler_rewards.fit_transform(yraw.reshape(-1, 1))
-    y = np.concatenate([meta_y.values, yraw.flatten()], axis=0)
+    #scaler_rewards= MinMaxScaler()
+    #yraw = scaler_rewards.fit_transform(yraw.reshape(-1, 1))
+    #y = np.concatenate([meta_y.values, yraw.flatten()], axis=0)#yraw.flatten() #
     y = scaler.fit_transform(y.reshape(-1, 1)).reshape(y.shape[0],-1)
+    y_val = scaler.transform(y_val.reshape(-1,1).reshape(y_val.shape[0], -1))
     
-
+    print(pd.DataFrame(data=y_val).describe(), 'DESCIBE')
     train_x = torch.tensor(X, dtype=torch.float32)
     train_y =torch.squeeze(torch.tensor(y, dtype=torch.float32))
+
+    X_val = torch.tensor(X_val, dtype=torch.float32)
+    y_val =torch.squeeze(torch.tensor(y_val, dtype=torch.float32))
 
     likelihood = gpytorch.likelihoods.GaussianLikelihood()
 
 
     m = GPRegressionModel_DKL(train_x, train_y, feature_extractor=neural_network, likelihood=likelihood,seed=seed)
-    m_trained, mll_m ,l= metatrain_DKL_wilson(model=m, X_train=train_x, y_train=train_y, likelihood=likelihood,seed=seed,training_iterations=config['num_epochs_gp'])
+    m_trained, mll_m ,l= metatrain_DKL(model=m, X_train=train_x, y_train=train_y, likelihood=likelihood,seed=seed, X_val=X_val, y_val=y_val)
 
     x_test = normalize(x_test, limits)
     x_test = torch.tensor(x_test, dtype=torch.float32)
 
-        
+    print('going to eval')
     m_trained.eval()
     l.eval()
     with torch.no_grad(), gpytorch.settings.use_toeplitz(False), gpytorch.settings.fast_pred_var():
         preds = m_trained(x_test)
     
     y_test = scaler_rewards.transform(y_test.reshape(-1, 1))
-    rmse = root_mean_squared_error(y_test, np.array(preds.mean))#torch.sqrt(torch.mean((preds.mean - y_test)**2))
+    rmse = root_mean_squared_error(y_test, np.array(scaler.inverse_transform(preds.mean.reshape(-1, 1))))#torch.sqrt(torch.mean((preds.mean - y_test)**2))
     rmse = rmse/math.sqrt(len(x_test))
+    # why is it predicting negatives when im feeding it positives 
+    print(pd.DataFrame(data = preds.variance, columns = ['metapreds']).describe())
     print(f'RSME META MODEL: {rmse}') 
+    print('correlation', np.corrcoef(preds.mean, preds.variance), preds.mean.shape)
+    optimize_acq_DKL(UCB_DKL, m_trained, m_trained,l,l, Xraw[-1,:3], 3 ,seed)
     
     return rmse
 
@@ -373,9 +421,16 @@ def create_and_test_baseline_model(Xraw, yraw, config, x_test, y_test):
     
     y_test = scaler.transform(y_test.reshape(-1, 1))
     # Step 3: Calculate RMSE
-    rmse = root_mean_squared_error(y_test, preds)/math.sqrt(len(x_test))
+    rmse = root_mean_squared_error(y_test, scaler.inverse_transform(preds.reshape(-1, 1)))/math.sqrt(len(x_test))
+    print(pd.DataFrame(data = pred_vars, columns = ['basepreds']).describe())
     print(f"RMSE BASELINE: {rmse}")
-    return rmse 
+    print('baslinecorr', np.corrcoef(preds.reshape(-1), pred_vars.reshape(-1)))
+    
+
+    #corr, _ = pearsonr(preds.reshape(-1), pred_vars.reshape(-1))
+    #print(corr)
+    #optimize_acq(UCB, m, m,  Xraw[-1,:3], num_f,0)
+    return rmse
 
     
 
@@ -477,6 +532,8 @@ path_3='/pfs/work7/workspace/scratch/fr_zs53-dkl_exps/cluster_logs/2024-09-22_18
 path_4='/pfs/work7/workspace/scratch/fr_zs53-dkl_exps/cluster_logs/2024-09-22_18:04.31_pb2_job_scripts.CARLBipedalWalker.TERRAIN_STEP.c10/CARLBipedalWalker_TERRAIN_STEP_0.4666666666666667_pb2_Size_8_timesteps_total/seed9'
 path_5='/pfs/work7/workspace/scratch/fr_zs53-dkl_exps/cluster_logs/2024-09-22_18:04.30_pb2_job_scripts.CARLBipedalWalker.TERRAIN_LENGTH.c20/CARLBipedalWalker_TERRAIN_LENGTH_400.0_pb2_Size_8_timesteps_total/seed3'
 path_6 = '/pfs/work7/workspace/scratch/fr_zs53-dkl_exps/cluster_logs/2024-09-22_18:04.31_pb2_job_scripts.CARLBipedalWalker.TERRAIN_LENGTH.c9/CARLBipedalWalker_TERRAIN_LENGTH_180.0_pb2_Size_8_timesteps_total/seed5'
+path_7 ='/pfs/work7/workspace/scratch/fr_zs53-dkl_exps/cluster_logs/2024-10-14_16:40.23_pb2_job_scripts.CARLBipedalWalker.TERRAIN_LENGTH.c17/CARLBipedalWalker_TERRAIN_LENGTH_340.0_pb2_Size_8_timesteps_total/seed0'
+path_8='/pfs/work7/workspace/scratch/fr_zs53-dkl_exps/cluster_logs/2024-10-14_16:40.24_pb2_job_scripts.CARLBipedalWalker.TERRAIN_LENGTH.c19/CARLBipedalWalker_TERRAIN_LENGTH_380.0_pb2_Size_8_timesteps_total/seed0'
 search_space = {
     #"lr": tune.grid_search([0.01, 0.001, 0.0001]),
     'train_dir_list' : tune.grid_search([[path_1],[path_2,path_1, path_3]]),
@@ -485,7 +542,7 @@ search_space = {
     'lr' : 0.01, #tune.grid_search([0.01, 0.001, 0.0001]), # lr - gp #
     'num_epochs_nn': 5, #tune.grid_search([100]),
     'hyperparam_bounds': {
-                "lambda": [0.9, 0.99],
+                "lambda_": [0.9, 0.99],
                 "clip_param": [0.1, 0.5],
                 #'gamma': [0.9,0.99],
                 "lr": [1e-5, 1e-3],
@@ -516,8 +573,8 @@ search_space = {
 
 }
 sampled_config = {
-    'train_dir_list': [path_3],  # Only one option
-    'test_dir': path_5,                         # Only one option
+    'train_dir_list': [path_7],  # Only one option
+    'test_dir': path_8,                         # Only one option
     'seed': 0,                                  # Fixed value
     'lr': 0.01,                                 # Only one option from grid search
     'num_epochs_nn': 250,                         # Only one option
@@ -530,7 +587,7 @@ sampled_config = {
                 'num_sgd_iter': [3,30]
              },
     'num_epochs_gp': 40,                       # Only one option
-    'architecture': archi_1          # Only one option
+    'architecture': archi_1       # Only one option
 }
 
 def complex_function(X):

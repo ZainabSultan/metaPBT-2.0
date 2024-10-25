@@ -6,6 +6,9 @@ from carl.context.selection import AbstractSelector
 from gymnasium import Env
 from carl.envs.gymnasium.box2d import CARLBipedalWalker, CARLLunarLander
 import numpy as np
+
+
+
 class CARLWrapperBase(Env):
     def __init__(
         self,
@@ -16,22 +19,28 @@ class CARLWrapperBase(Env):
         obs_context_as_dict: bool = True,
         context_selector: Optional[Union[AbstractSelector, Type[AbstractSelector]]] = None,
         context_selector_kwargs: Optional[dict] = None,
+        seed=None,
         **kwargs
     ) -> None:
         self.env = env_class(env, contexts, obs_context_features, obs_context_as_dict, context_selector, context_selector_kwargs, **kwargs)
         self.observation_space = self.env.base_observation_space
         self.action_space = self.env.action_space
-        
+        self.seed = seed
 
     def step(self, action):
+        
         obs_context, r, term, trun, info = self.env.step(action)
         obs = obs_context['obs']
+        #assert not np.isnan(obs).any(), "Observation contains NaN values!"
+        #assert not np.isnan(action).any(), "ACTIONS contains NaN values!"
         obs = np.clip(obs, self.observation_space.low, self.observation_space.high)
         self.state = obs
         return obs, r, term, trun, info
-
+    
     def reset(self, seed=None, options=None):
-        obs_context, info = self.env.reset(seed=seed, options=options)
+        if seed:
+            self.seed=seed
+        obs_context, info = self.env.reset(seed=self.seed, options=options)
         obs = obs_context['obs']
         obs = np.clip(obs, self.observation_space.low, self.observation_space.high)
         self.state = obs
@@ -48,25 +57,6 @@ class CARLLunarLanderWrapper(CARLWrapperBase):
     def __init__(self, *args, **kwargs):
         super().__init__(CARLLunarLander, *args, **kwargs)
 
-    # def step(self, action):
-    #     obs_context, r, term, trun, info = self.env.step(action)
-    #     obs = obs_context['obs']
-        
-    #     # Cap the observation within the limits of the observation space
-    #     obs = np.clip(obs, self.observation_space.low, self.observation_space.high)
-        
-    #     self.state = obs
-    #     return obs, r, term, trun, info
-
-    # def reset(self, seed=None, options=None):
-    #     obs_context, info = self.env.reset(seed=seed, options=options)
-    #     obs = obs_context['obs']
-        
-    #     # Cap the reset observation as well
-    #     obs = np.clip(obs, self.observation_space.low, self.observation_space.high)
-        
-    #     self.state = obs
-    #     return obs, info
 
 class CARLBipedalWalkerWrapper(CARLWrapperBase):
     def __init__(self, *args, **kwargs):
@@ -93,40 +83,28 @@ class CARLPendulumWrapper(CARLWrapperBase):
         super().__init__(CARLPendulum, *args, **kwargs)
     
 
+def env_creator(env_config):
+    print(env_config)
+    env_name = env_config.pop('env_name')
+    if 'seed' not in env_config:
+        seed = 0
+    else:
+        seed = env_config.pop('seed')
+    if env_name == 'CARLCartPole':
+        env = CARLCartPoleWrapper
+    elif env_name == 'CARLMountainCar':
+        env = CARLMountainCarWrapper
+    elif env_name == 'CARLMountainCarCont':
+        env = CARLMountainCarContWrapper
+    elif env_name == 'CARLAcrobot':
+        env = CARLAcrobotWrapper
+    elif env_name == 'CARLPendulum':
+        env = CARLPendulumWrapper
+    elif env_name == 'CARLLunarLander':
+        env = CARLLunarLanderWrapper
+    elif env_name == 'CARLBipedalWalker':
+        env = CARLBipedalWalkerWrapper
+    else:
+        raise NotImplementedError
+    return env(contexts={0:env_config}, seed=seed)
 
-# env_config =  {'env_config': {'gravity': 0.01}, 'env_name': 'CARLLunarLander'}
-# env = CARLLunarLanderWrapper(contexts={0:{'GRAVITY_X':10}})
-# env.reset(seed=0)
-# print(env.step(0))
-
-# # env_config =  {'LINK_LENGTH_1': 1}
-# # env = CARLAcrobotWrapper(contexts={0:env_config})
-# # env.reset(seed=0)
-# # print(env.step(0))
-# from ray.rllib.algorithms import ppo
-
-# from ray.tune.registry import register_env
-# def env_creator(env_config):
-#     env_name = env_config['env_name']
-#     env_context = env_config['env_config']
-#     if env_name == 'CARLCartPole':
-#         env = CARLCartPoleWrapper(contexts={0:env_context})
-#     elif env_name == 'CARLMountainCar':
-#         env = CARLMountainCarWrapper(contexts={0:env_context})
-#     elif env_name == 'CARLMountainCarCont':
-#         env=CARLMountainCarContWrapper(contexts={0:env_context})
-#     elif env_name == 'CARLAcrobot':
-#         env=CARLAcrobotWrapper(contexts={0:env_context})
-#     elif env_name == 'CARLPendulum':
-#         env=CARLPendulumWrapper(contexts={0:env_context})
-#     else:
-#         raise NotImplementedError
-
-#     return env
-
-# # env_name='CARLMountainCar'
-
-# register_env(env_name, env_creator)
-# algo = ppo.PPO(env="CARLMountainCar",config={
-#     "env_config": env_config,  # config to pass to env class
-# })

@@ -16,10 +16,12 @@ import pandas as pd
 from ray.tune.registry import register_env
 import torch
 from DKL.Meta_DKL import Meta_DKL
-
+from CARLWrapper import env_creator
 from copy import deepcopy
-
-
+from context_mapper import get_context, get_context_id
+# 4 6 8 9
+# 8 7 5 4 
+# 99, 1.01
 def dict_to_path_string(params):
     # Flatten the dictionary into key=value format
     elements = [f"{key}_{value}" for key, value in params.items()]
@@ -43,58 +45,25 @@ def explore(config):
     config["train_batch_size"] = int(config["train_batch_size"])
     return config
 
-def env_creator(env_config):
-    print(env_config)
-    env_name = env_config.pop('env_name')
-    if env_name == 'CARLCartPole':
-        from CARLWrapper import CARLCartPoleWrapper as env
-    elif env_name == 'CARLMountainCar':
-        from CARLWrapper import CARLMountainCarWrapper as env
-    elif env_name == 'CARLMountainCarCont':
-        from CARLWrapper import CARLMountainCarContWrapper as env
-    elif env_name == 'CARLAcrobot':
-        from CARLWrapper import CARLAcrobotWrapper as env
-    elif env_name == 'CARLPendulum':
-        from CARLWrapper import CARLPendulumWrapper as env
-    elif env_name == 'CARLLunarLander':
-        from CARLWrapper import CARLLunarLanderWrapper as env
-    elif env_name == 'CARLBipedalWalker':
-        from CARLWrapper import CARLBipedalWalkerWrapper as env
-    else:
-        raise NotImplementedError
-    return env(contexts={0:env_config})
 
-def generate_sampler(seed, dist_type, bounds_tuple, num_samples):
-            # loguniform_dist = tune.loguniform(1e-5, 1e-3)
-        # samples_lr = [loguniform_dist.sample() for _ in range(args.num_samples)]
-        
-        # sample_iter_lr = iter(samples_lr)
-        # get_lr_sample = lambda: next(sample_iter_lr)
-        random.seed(seed)
-        np.random.seed(seed)
-        torch.manual_seed(seed)
 
-        dist = dist_type(bounds_tuple[0], bounds_tuple[1])
-        samples = [dist.sample() for _ in range(num_samples)]
-        sample_iterator = iter(samples)
-        get_sample_func = lambda: next(sample_iterator)
-        return get_sample_func
+
 
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--max", type=int, default=1000_000)
+    parser.add_argument("--max", type=int, default=30_000)
     parser.add_argument("--algo", type=str, default="PPO")
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--num_samples", type=int, default=4)
-    parser.add_argument("--t_ready", type=int, default=500_00)
+    parser.add_argument("--t_ready", type=int, default=4000)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--context", type=str, default='{"TERRAIN_STEP":0.8}')
+    parser.add_argument("--context", type=str, default='{"TERRAIN_LENGTH":200}')
     parser.add_argument(
         "--horizon", type=int, default=1600
     )  # make this 1000 for other envs
     parser.add_argument("--perturb", type=float, default=0.25)  # if using PBT
-    parser.add_argument("--env_name", type=str, default="CARLMountainCar") #"CartPole-v1"
+    parser.add_argument("--env_name", type=str, default="CARLBipedalWalker") #"CartPole-v1"
     parser.add_argument(
         "--criteria", type=str, default="timesteps_total"
     )  # "training_iteration", "time_total_s"
@@ -102,15 +71,35 @@ if __name__ == "__main__":
         "--net", type=str, default="32_32"
     )  # May be important to use a larger network for bigger tasks.
     parser.add_argument("--filename", type=str, default="")
-    parser.add_argument("--scheduler", type=str, default="metadkl")  # ['pbt', 'pb2']
     parser.add_argument("--save_csv", type=bool, default=True)
     parser.add_argument('--ws_dir', type=str, default=r'/home/fr/fr_fr/fr_zs53/DKL/metaPBT-2.0/testing_dir')
     parser.add_argument('--metric', type=str, default='env_runners/episode_reward_mean')
-    parser.add_argument('--metadata_dir_list', nargs='+', help='List of directories', required=True)
+    parser.add_argument('--num_meta_envs', help='how many envs', default=1)
+    parser.add_argument('--meta_selection_method', help='how to select the envs', default='closest')
+    parser.add_argument('--meta_data_base_dir', default='/pfs/work7/workspace/scratch/fr_zs53-dkl_exps/CARLBipedalWalker_4_agents/TERRAIN_LENGTH')
+
 
     args = parser.parse_args()
     context = json.loads(args.context.replace("'", ""))
+    
     context_= context | {'env_name':args.env_name}  # includes env name for the env creator
+
+    id = get_context_id(args.env_name, context)
+    id_list = np.arange(1,22)
+    
+    sorted_ids = sorted(id_list, key=lambda id_val: abs(id_val - id))
+    if args.meta_selection_method == 'closest':
+        closest_ids = sorted_ids[:int(args.num_meta_envs)]
+
+    intersection = set(closest_ids).intersection([4,5,6,7])
+
+    # Check if there's any intersection
+    if intersection:
+        print(f"Intersection found: {intersection}")
+
+    else:
+        print("No intersection found")
+    
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -118,40 +107,26 @@ if __name__ == "__main__":
     if True:
         register_env( args.env_name, env_creator)
 
-
-        if args.env_name in ["BipedalWalker-v2", "BipedalWalker-v3"]:
-            horizon = 1600
-        else:
-            horizon = 1000
-
         timelog = datetime.now().strftime("%Y-%m-%d_%H:%M:%S")
+            
+        args.dir = os.path.join(args.ws_dir , "{}_{}_{}_Size_{}_{}".format(
+                args.env_name,
+                dict_to_path_string(context),
+                'MetaDKL',
+                str(args.num_samples),
+                args.criteria,
+            ))
 
-
-        args.dir = os.path.join(args.ws_dir , "{}_{}_{}_{}_Size{}_{}_{}".format(
-            timelog,
-            args.algo,
-            dict_to_path_string(context),
-            args.scheduler,
-            str(args.num_samples),
-            args.env_name,
-            args.criteria,
-        ))
-
-        # meta_data_dir_list = ['/home/fr/fr_fr/fr_zs53/DKL/metaPBT-2.0/testing_dir/2024-09-12_19:58:08_PPO_length_0.05_pb2_Size4_CARLCartPole_timesteps_total/pb2_CARLCartPole_seed0_length_0.05',
-        #                       '/pfs/work7/workspace/scratch/fr_zs53-dkl_exps/cluster_logs/pb2.gravity.c1/2024-09-15_18:44:38_PPO_gravity_0.9800000000000001_pb2_Size8_CARLCartPole_timesteps_total/pb2_CARLCartPole_seed0_gravity_0.9800000000000001']
-
-        meta_data_dir_list = args.metadata_dir_list
-        print(meta_data_dir_list)
+        current_context = get_context_id(args.env_name, context)
+        
         pb2_metadkl=Meta_DKL(
+            
             time_attr=args.criteria,
-            #metric=args.metric,
-            #mode="max",
             perturbation_interval=args.t_ready,
-            quantile_fraction=args.perturb,  # copy bottom % with top %
             # Specifies the hyperparam search space
             hyperparam_bounds={
-                #"lambda": [0.9, 1.0],
-                #"clip_param": [0.1, 0.5],
+                "lambda_": [0.9, 0.99],
+                "clip_param": [0.1, 0.5],
                 "lr": [1e-5, 1e-3],
                 #"train_batch_size": [1000, 5000],
                 'num_sgd_iter': [3,30]
@@ -159,41 +134,50 @@ if __name__ == "__main__":
             },
             seed=args.seed,
             synch=True,
-            meta_data_dir_list=meta_data_dir_list,
-            current_env_config=deepcopy(context_)
-            #save_path=args.dir
+            meta_selection_method=args.meta_selection_method,
+            num_meta_envs=int(args.num_meta_envs),
+            current_env_config=deepcopy(context_),
+            meta_data_base_dir=args.meta_data_base_dir
         )
         
 
-
-        schedulers = { 'metadkl':pb2_metadkl}
-        # # LR SAMPLER
-        # loguniform_dist = tune.loguniform(1e-5, 1e-3)
-        # samples_lr = [loguniform_dist.sample() for _ in range(args.num_samples)]
-        
-        # sample_iter_lr = iter(samples_lr)
-        # get_lr_sample = lambda: next(sample_iter_lr)
-
-
+        easy_envs = ['CARLMountainCar', 'CARLCartPole', 'CARLAcrobot', 'CARLPendulum', 'CARLMountainCarCont']
         config = PPOConfig()
         config.environment(env=args.env_name, env_config=context_)
         config.seed = args.seed
         config.rollouts(num_envs_per_worker=1)
-        config.training(
-            #lr= tune.sample_from(generate_sampler(args.seed, tune.loguniform, (1e-5, 1e-3), args.num_samples)), #tune.loguniform(1e-5, 1e-3),
+
+        if args.env_name in easy_envs:
+            config.training(
+            lr=tune.loguniform(1e-5, 1e-3),
             #kl_coeff = 1.0,
-            #num_sgd_iter = tune.qrandint(3,30)#tune.sample_from(generate_sampler(args.seed,tune.qrandint, (3,30), args.num_samples))#tune.qrandint(3,30)
+            grad_clip=2.5,
+            clip_param = tune.uniform(0.1, 0.5),
+            lambda_ = tune.uniform(0.9, 0.99),
+            num_sgd_iter = tune.qrandint(3,30),
+            #sgd_minibatch_size = tune.choice([128, 512, 2000]),
+            train_batch_size= 1000#tune.choice([1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10_000]),
+            #gamma=tune.uniform(0.9, 0.99),
+        #entropy_coeff=tune.uniform(0.01, 0.5),
+
+        )
+            print('easy env activated')
+        else:
+            config.training(
+            lr=tune.loguniform(1e-5, 1e-3),
+            #kl_coeff = 1.0,
+            grad_clip=2.5,
+            clip_param = tune.uniform(0.1, 0.5),
+            lambda_ = tune.uniform(0.9, 0.99),
+            num_sgd_iter = tune.qrandint(3,30)
             #sgd_minibatch_size = tune.choice([128, 512, 2000]),
             #train_batch_size= tune.qrandint(1000,10_000),#tune.choice([1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10_000]),
             #gamma=tune.uniform(0.9, 0.99),
         #entropy_coeff=tune.uniform(0.01, 0.5),
-            lr=tune.loguniform(1e-5, 1e-3),
-            #kl_coeff = 1.0,
-            num_sgd_iter = tune.qrandint(3,30)
 
         )
-        run_name= "{}_{}_seed{}_{}".format(
-                args.scheduler, args.env_name, str(args.seed), dict_to_path_string(context)
+        run_name= "seed{}".format(
+                 str(args.seed)
             )
         #config.debugging(log_level ="WARN")
         tuner = tune.Tuner(
@@ -201,7 +185,7 @@ if __name__ == "__main__":
             tune_config=tune.TuneConfig(
                 metric=args.metric,
                 mode="max",
-                scheduler=schedulers[args.scheduler],
+                scheduler=pb2_metadkl,
                 num_samples=args.num_samples,
             
             ),
