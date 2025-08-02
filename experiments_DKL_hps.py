@@ -305,24 +305,12 @@ def create_and_test_meta_model(Xraw, yraw, config, neural_network, meta_x, meta_
         y_val = scaler_rewards.transform(y_val.reshape(-1, 1))
     
         y = np.concatenate([meta_y.values, y_train_split.flatten()], axis=0)
-    #X_train =  np.concatenate([meta_x.values, Xraw], axis=0)
     oldpoints = X_train[:, :3 ]
 
     limits = get_limits(oldpoints, bounds)
-    # print('all of us:')
-    # print(pd.DataFrame(data = X_train).describe())
-    # print('Xraw, so just our test')
-    # print(pd.DataFrame(data = Xraw).describe())
-    # print('meta data only')
-    # print(meta_x.describe())
     X = normalize(X_train, limits)
-    # print('normalised using limits: ')
-    # print(pd.DataFrame(data=X).describe())
     
     scaler = StandardScaler()
-    #scaler_rewards= MinMaxScaler()
-    #yraw = scaler_rewards.fit_transform(yraw.reshape(-1, 1))
-    #y = np.concatenate([meta_y.values, yraw.flatten()], axis=0)#yraw.flatten() #
     y = scaler.fit_transform(y.reshape(-1, 1)).reshape(y.shape[0],-1)
     y_val = scaler.transform(y_val.reshape(-1,1).reshape(y_val.shape[0], -1))
     
@@ -337,7 +325,7 @@ def create_and_test_meta_model(Xraw, yraw, config, neural_network, meta_x, meta_
 
 
     m = GPRegressionModel_DKL(train_x, train_y, feature_extractor=neural_network, likelihood=likelihood,seed=seed)
-    m_trained, mll_m ,l= metatrain_DKL(model=m, X_train=train_x, y_train=train_y, likelihood=likelihood,seed=seed, X_val=X_val, y_val=y_val)
+    m_trained, _ ,l= metatrain_DKL(model=m, X_train=train_x, y_train=train_y, likelihood=likelihood,seed=seed, X_val=X_val, y_val=y_val)
 
     x_test = normalize(x_test, limits)
     x_test = torch.tensor(x_test, dtype=torch.float32)
@@ -351,7 +339,6 @@ def create_and_test_meta_model(Xraw, yraw, config, neural_network, meta_x, meta_
     y_test = scaler_rewards.transform(y_test.reshape(-1, 1))
     rmse = root_mean_squared_error(y_test, np.array(scaler.inverse_transform(preds.mean.reshape(-1, 1))))#torch.sqrt(torch.mean((preds.mean - y_test)**2))
     rmse = rmse/math.sqrt(len(x_test))
-    # why is it predicting negatives when im feeding it positives 
     print(pd.DataFrame(data = preds.variance, columns = ['metapreds']).describe())
     print(f'RSME META MODEL: {rmse}') 
     print('correlation', np.corrcoef(preds.mean, preds.variance), preds.mean.shape)
@@ -613,11 +600,5 @@ def generate_dummy_data():
     test_y = torch.tensor(y[train_n:], dtype=torch.float32)
     return X_train, y_train, test_x, test_y
 dynamic_exp(config=sampled_config)
-#ray.init()  
-#tune.run(create_gp, config=search_space, num_samples=1, name='arewelearning', storage_path=args.ws_dir)
 
-
-
-# pretrain_neural_network_model_with_sched(X_train = train_x, y_train=train_y, model=create_nn_model(sampled_config),
-#                                          X_val=test_x, y_val=test_y, seed=0)
 

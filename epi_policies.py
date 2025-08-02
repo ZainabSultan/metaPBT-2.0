@@ -16,11 +16,6 @@ if env_name == 'CARLMountainCar':
     DEFAULT_VALUE = defaults_mcd[feature]
 elif env_name=='CARLCartPole':
     DEFAULT_VALUE = defaults_cartpole[feature]
-
-#cartpo9le
-# tau 0.02
-# pole lenght 0.5
-# Length values based on script index
 feature_values = np.array([
     0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 
     1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0, 
@@ -71,8 +66,6 @@ for seed in {{0..9}}; do
     python3 -m metaDKL_experiment $kwargs
 done
 """
- #cluster_logs_dir=$(ws_find dkl_exps)/cluster_logs/${SLURM_JOB_NAME}/   
-    # Write the content to the file
     with open(filepath, 'w') as file:
         file.write(script_content)
     

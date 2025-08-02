@@ -19,17 +19,9 @@ from DKL.Meta_DKL import Meta_DKL
 from CARLWrapper import env_creator
 from copy import deepcopy
 from context_mapper import get_context, get_context_id
-# 4 6 8 9
-# 8 7 5 4 
-# 99, 1.01
 def dict_to_path_string(params):
-    # Flatten the dictionary into key=value format
     elements = [f"{key}_{value}" for key, value in params.items()]
-    
-    # Join the elements with underscores or any other separator
     path_friendly_string = "_".join(elements)
-    
-    # Replace any problematic characters if needed
     path_friendly_string = path_friendly_string.replace(" ", "_").replace("{", "").replace("}", "").replace(":", "")
     
     return path_friendly_string
@@ -59,17 +51,10 @@ if __name__ == "__main__":
     parser.add_argument("--t_ready", type=int, default=4000)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--context", type=str, default='{"TERRAIN_LENGTH":200}')
-    parser.add_argument(
-        "--horizon", type=int, default=1600
-    )  # make this 1000 for other envs
     parser.add_argument("--perturb", type=float, default=0.25)  # if using PBT
     parser.add_argument("--env_name", type=str, default="CARLBipedalWalker") #"CartPole-v1"
-    parser.add_argument(
-        "--criteria", type=str, default="timesteps_total"
-    )  # "training_iteration", "time_total_s"
-    parser.add_argument(
-        "--net", type=str, default="32_32"
-    )  # May be important to use a larger network for bigger tasks.
+    parser.add_argument("--criteria", type=str, default="timesteps_total")
+    parser.add_argument( "--net", type=str, default="32_32")  
     parser.add_argument("--filename", type=str, default="")
     parser.add_argument("--save_csv", type=bool, default=True)
     parser.add_argument('--ws_dir', type=str, default=r'/home/fr/fr_fr/fr_zs53/DKL/metaPBT-2.0/testing_dir')
@@ -128,9 +113,7 @@ if __name__ == "__main__":
                 "lambda_": [0.9, 0.99],
                 "clip_param": [0.1, 0.5],
                 "lr": [1e-5, 1e-3],
-                #"train_batch_size": [1000, 5000],
                 'num_sgd_iter': [3,30]
-                #"train_batch_size": [1000, 60000],
             },
             seed=args.seed,
             synch=True,
@@ -150,30 +133,21 @@ if __name__ == "__main__":
         if args.env_name in easy_envs:
             config.training(
             lr=tune.loguniform(1e-5, 1e-3),
-            #kl_coeff = 1.0,
             grad_clip=2.5,
             clip_param = tune.uniform(0.1, 0.5),
             lambda_ = tune.uniform(0.9, 0.99),
             num_sgd_iter = tune.qrandint(3,30),
-            #sgd_minibatch_size = tune.choice([128, 512, 2000]),
-            train_batch_size= 1000#tune.choice([1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10_000]),
-            #gamma=tune.uniform(0.9, 0.99),
-        #entropy_coeff=tune.uniform(0.01, 0.5),
+            train_batch_size= 1000
+           
 
         )
-            print('easy env activated')
         else:
             config.training(
             lr=tune.loguniform(1e-5, 1e-3),
-            #kl_coeff = 1.0,
             grad_clip=2.5,
             clip_param = tune.uniform(0.1, 0.5),
             lambda_ = tune.uniform(0.9, 0.99),
             num_sgd_iter = tune.qrandint(3,30)
-            #sgd_minibatch_size = tune.choice([128, 512, 2000]),
-            #train_batch_size= tune.qrandint(1000,10_000),#tune.choice([1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10_000]),
-            #gamma=tune.uniform(0.9, 0.99),
-        #entropy_coeff=tune.uniform(0.01, 0.5),
 
         )
         run_name= "seed{}".format(
@@ -200,22 +174,11 @@ if __name__ == "__main__":
         )
         results_grid = tuner.fit()
         best_result = results_grid.get_best_result(metric=args.metric, mode="max")
-
-        # Print `path` where checkpoints are stored
         print('Best result path:', best_result.path)
-
-        # Print the best trial `config` reported at the last iteration
-        # NOTE: This config is just what the trial ended up with at the last iteration.
-        # See the next section for replaying the entire history of configs.
         print("Best final iteration hyperparameter config:\n", best_result.config)
-
-        # Plot the learning curve for the best trial
         df = best_result.metrics_dataframe
-        # Deduplicate, since PBT might introduce duplicate data
         df = df.drop_duplicates(subset=args.criteria, keep="last")
         df.plot(args.criteria, args.metric)
         plt.xlabel("Timesteps")
         plt.ylabel("Rewards")
         plt.savefig(os.path.join(args.dir,run_name,'best_agent.png'))
-    # except Exception as e:
-    #     print(e)

@@ -96,17 +96,12 @@ def DIST(trajectories_pair, pi_star_file_path_pair, has_discrete_actions, tolera
                 else:
                     dist = l1_distance
                 env_state_1, env_state_2 = states_env_1[i], states_env_2[j]
-                #action_dist_1, _ = pi_star_env_1.predict(env_state_1, deterministic=False)
-                #action_dist_2, _ = pi_star_env_2.predict(env_state_2, deterministic=False)
                 action_dist_1 = predict_proba(pi_star_env_1, env_state_1)
                 action_dist_2 = predict_proba(pi_star_env_2, env_state_2)
                 cost_matrix_current[i,j] = dist(action_dist_1, action_dist_2) + (gamma *cost_matrix[i,j])
                 if i == (len(cost_matrix) -1) and j == (len(cost_matrix[0]) -1): 
                     # distance between terminal states is 0
                     cost_matrix_current[i,j] = 0
-        #absolute_difference = np.abs(cost_matrix_current - cost_matrix)
-        #sum_of_differences = np.sum(absolute_difference)
-        #print(sum_of_differences)
         if np.allclose(cost_matrix_current, cost_matrix, atol=tolerance):
             break
         else:
@@ -137,27 +132,7 @@ def generate_state_pairs(trajectories_dir):
         
         cost_matrix = DIST(trajectories_pair, pi_star_file_path_pair, has_discrete_actions=True)
         print('this was', trajectories_env_1['context'], trajectories_env_2['context'], trajectories_env_1['context']- trajectories_env_2['context'])
-
-        # print(cost_matrix.shape)
-        # print(cost_matrix)
-
-        
-
-        # states_cartesian_product = list(itertools.product(states_env_1, states_env_2))
-        # cost_matrix = np.array([])
-        # for state_pair in states_cartesian_product:
-        #     dist = DIST(state_pair, pi_star_file_path_pair)
-
-        
-
-
-
-    # for f in os.listdir(trajectories_dir):
-    #     file_path = os.path.join(trajectories_dir,f)
-    #     if os.path.isfile(file_path):
-    #         with open(file_path):
-    #             trajectory_file = json.load(file_path)
-    #             env_context = trajectory_file['context']
+        print('cost matrix', cost_matrix)
 
 
 
@@ -165,16 +140,7 @@ def generate_state_pairs(trajectories_dir):
 
 
 def main():
-    # uncomment below to generate trajectpries
-    # context = {'gravity': 0.0025*1.8}
-    # wrapper_context = {0:context}
-    # base_env = CARLMountainCar(contexts=wrapper_context)
-    # print('base',base_env.observation_space)
-    # base_env_space = spaces.Box(shape=(2,), low=-np.inf, high=np.inf)
-    # env= CARL_env_wrapper(base_env, base_env_space)
-    # model_path = train_policy(env)
-    # #model_path ='/Users/zasulta/Documents/DL/23_05_2024_DL_test/PPO/MountainCar-v0/0.0002_2024-05-24_19:11:43'
-    # generate_trajectories(env, model_path)
+
     generate_state_pairs('trajectories/MountainCar-V0')
 
 
@@ -186,11 +152,3 @@ trajectories_save_dir = 'trajectories'
 
 if __name__ == "__main__":
     main()
-
-
-# def DIST(env, pi_star):
-#     #
-#     action_space = env.action_space
-
-#     if isinstance(action_space, spaces.Discrete):
-        # TV

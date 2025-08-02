@@ -61,7 +61,7 @@ if __name__ == "__main__":
     parser.add_argument("--context", type=str, default='{"GRAVITY_X":10}')
     parser.add_argument(
         "--horizon", type=int, default=1600
-    )  # make this 1000 for other envs
+    ) 
     parser.add_argument("--perturb", type=float, default=0.25)  # if using PBT
     parser.add_argument("--env_name", type=str, default="CARLLunarLander") #"CartPole-v1"
     parser.add_argument(
@@ -69,7 +69,7 @@ if __name__ == "__main__":
     )  # "training_iteration", "time_total_s"
     parser.add_argument(
         "--net", type=str, default="32_32"
-    )  # May be important to use a larger network for bigger tasks.
+    ) 
     parser.add_argument("--filename", type=str, default="")
     parser.add_argument("--scheduler", type=str, default="pb2")  # ['pbt', 'pb2']
     parser.add_argument("--save_csv", type=bool, default=True)
@@ -110,55 +110,21 @@ if __name__ == "__main__":
             ))
 
 
-        # pb2_dkl=Meta_DKL(
-        #     time_attr=args.criteria,
-        #     #metric=args.metric,
-        #     #mode="max",
-        #     perturbation_interval=args.t_ready,
-        #     quantile_fraction=args.perturb,  # copy bottom % with top %
-        #     # Specifies the hyperparam search space
-        #     hyperparam_bounds={
-        #         "lambda": [0.9, 1.0],
-        #         "clip_param": [0.1, 0.5],
-        #         "lr": [1e-5, 1e-3],
-        #         #"train_batch_size": [1000, 5000],
-        #         'num_sgd_iter': [3,30]
-        #         #"train_batch_size": [1000, 60000],
-        #     },
-        #     seed=args.seed,
-        #     synch=True
-        #     #save_path=args.dir
-        
-        # )
 
         pb2 = PB2(
             time_attr=args.criteria,
-            #metric=args.metric,
-            #mode="max",
             perturbation_interval=args.t_ready,
-            #quantile_fraction=args.perturb,  # copy bottom % with top %
-            # Specifies the hyperparam search space
+
             hyperparam_bounds={
                 "lambda_": [0.9, 0.99],
                 "clip_param": [0.1, 0.5],
-                #'gamma': [0.9,0.99],
                 "lr": [1e-5, 1e-3],
-                #"train_batch_size": [1000, 10_000],
                 'num_sgd_iter': [3,30]
-                #'entropy_coeff' : [0.01, 0.5]
             },
             synch=True
                     )
 
         schedulers = { "pb2": pb2 }#'pb2_dkl':pb2_dkl}
-        # # LR SAMPLER
-        # loguniform_dist = tune.loguniform(1e-5, 1e-3)
-        # samples_lr = [loguniform_dist.sample() for _ in range(args.num_samples)]
-        
-        # sample_iter_lr = iter(samples_lr)
-        # get_lr_sample = lambda: next(sample_iter_lr)
-
-
         config = PPOConfig()
         config.environment(env=args.env_name, env_config=context_)
         config.seed = args.seed
@@ -167,43 +133,24 @@ if __name__ == "__main__":
         if args.env_name in easy_envs:
             config.training(
             lr=tune.loguniform(1e-5, 1e-3),
-            #kl_coeff = 1.0,
             grad_clip=2.5,
             clip_param = tune.uniform(0.1, 0.5),
             lambda_ = tune.uniform(0.9, 0.99),
             num_sgd_iter = tune.qrandint(3,30),
-            #sgd_minibatch_size = tune.choice([128, 512, 2000]),
-            train_batch_size= 1000#tune.choice([1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10_000]),
-            #gamma=tune.uniform(0.9, 0.99),
-        #entropy_coeff=tune.uniform(0.01, 0.5),
+            train_batch_size= 1000
+
 
         )
             print('easy env activated')
         else:
             config.training(
             lr=tune.loguniform(1e-5, 1e-3),
-            #kl_coeff = 1.0,
             grad_clip=2.5,
             clip_param = tune.uniform(0.1, 0.5),
             lambda_ = tune.uniform(0.9, 0.99),
             num_sgd_iter = tune.qrandint(3,30)
-            #sgd_minibatch_size = tune.choice([128, 512, 2000]),
-            #train_batch_size= tune.qrandint(1000,10_000),#tune.choice([1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10_000]),
-            #gamma=tune.uniform(0.9, 0.99),
-        #entropy_coeff=tune.uniform(0.01, 0.5),
 
         )
-
-        
-        # if args.env_name == 'CARLPendulum':
-        #     config.training(
-        #     lr=tune.loguniform(1e-5, 1e-3),
-        #     #kl_coeff = 1.0,
-        #     grad_clip=2,
-        #     num_sgd_iter = tune.qrandint(3,30),
-        #     vf_clip_param= 10.0
-
-        # )
         
             
         run_name= "seed{}".format(
@@ -220,9 +167,6 @@ if __name__ == "__main__":
             
             ),
             param_space=config,
-            # run_config=train.RunConfig(name=run_name
-            #                            ,stop={args.criteria: args.max}, storage_path=args.dir),
-
             run_config=train.RunConfig(name=run_name
                                        ,stop={args.criteria: args.max}, storage_path=args.dir,
                                        failure_config=train.FailureConfig(
@@ -234,15 +178,8 @@ if __name__ == "__main__":
 
         # Print `path` where checkpoints are stored
         print('Best result path:', best_result.path)
-
-        # Print the best trial `config` reported at the last iteration
-        # NOTE: This config is just what the trial ended up with at the last iteration.
-        # See the next section for replaying the entire history of configs.
         print("Best final iteration hyperparameter config:\n", best_result.config)
-
-        # Plot the learning curve for the best trial
         df = best_result.metrics_dataframe
-        # Deduplicate, since PBT might introduce duplicate data
         df = df.drop_duplicates(subset=args.criteria, keep="last")
         df.plot(args.criteria, args.metric)
         plt.xlabel("Timesteps")

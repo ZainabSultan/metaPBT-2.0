@@ -1,6 +1,9 @@
 # DEFAULTS
 import numpy as np
+'''
+This script contains functions to get the default values for different environments and to get the context based on the environment name, context id, and context feature.
 
+'''
 
 def get_defaults(env_name):
 
@@ -72,10 +75,6 @@ def get_context_id(env_name, feature_value_pair):
 
     return context+1
 
-
-
-
-     
 
 def get_context(env_name, context_id, context_feature):
     values = np.array([
